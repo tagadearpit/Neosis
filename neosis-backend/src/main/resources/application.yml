@@ -1,0 +1,35 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: neosis-backend
+  
+  # Database Configuration (Mapped to Environment Variables)
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  # JPA & Hibernate Settings (Automates Table Creation)
+  jpa:
+    hibernate:
+      ddl-auto: update # Automatically creates or updates your tables based on your User.java model
+    show-sql: true     # Prints SQL queries to your console (helpful for debugging)
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  # Google OAuth 2.0 Security Configuration
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_CLIENT_ID}
+            client-secret: ${GOOGLE_CLIENT_SECRET}
+            scope:
+              - email
+              - profile
