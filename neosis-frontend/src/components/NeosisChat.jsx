@@ -3,6 +3,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 import { MessageSquare, AlertCircle, ArrowLeft } from 'lucide-react';
 
+// ---> THIS IS THE NEW LINE <---
+// This tells Axios to ALWAYS send cookies (like your Google Auth session) cross-domain
+axios.defaults.withCredentials = true;
+
 export default function NeosisChat() {
   const [emailInput, setEmailInput] = useState('');
   const [error, setError] = useState('');
@@ -19,6 +23,7 @@ export default function NeosisChat() {
 
     try {
       // Call your Spring Boot backend to verify the recipient exists
+      // Because we set withCredentials = true above, this will now include your session cookie!
       await axios.get(`${backendUrl}/api/users/check?email=${emailInput}`);
       setActiveChat(emailInput);
       setEmailInput('');
