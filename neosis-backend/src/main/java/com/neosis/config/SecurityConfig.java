@@ -18,7 +18,8 @@ public class SecurityConfig {
         http
             .cors(cors -> cors.configurationSource(request -> {
                 CorsConfiguration config = new CorsConfiguration();
-                config.setAllowedOrigins(List.of("http://localhost:5173")); // Your React app URL (Vite default)
+                // Both localhost and your live Render frontend are now allowed
+                config.setAllowedOrigins(List.of("http://localhost:5173", "https://neosis-static-site.onrender.com")); 
                 config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
                 config.setAllowCredentials(true);
                 return config;
@@ -30,8 +31,8 @@ public class SecurityConfig {
             )
             .oauth2Login(oauth2 -> oauth2
                 .successHandler((request, response, authentication) -> {
-                    // Redirect to your React frontend after a successful Google Login
-                    response.sendRedirect("http://localhost:5173/chat");
+                    // Redirect to your live React frontend after a successful Google Login
+                    response.sendRedirect("https://neosis-static-site.onrender.com/chat");
                 })
             );
 
