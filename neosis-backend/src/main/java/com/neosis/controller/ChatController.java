@@ -1,6 +1,7 @@
 package com.neosis.controller;
 
 import com.neosis.model.ChatMessage;
+import com.neosis.repository.ChatMessageRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
@@ -17,6 +18,9 @@ public class ChatController {
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
 
+    @Autowired
+    private ChatMessageRepository chatMessageRepository; // NEW: Repository to save messages
+
     @MessageMapping("/chat.send")
     public void sendMessage(@Payload ChatMessage chatMessage, OAuth2AuthenticationToken token) {
         
@@ -31,18 +35,21 @@ public class ChatController {
             return; 
         }
 
-        // --- LAYER 2: XSS SANITIZATION (Replaces SQLi concerns) ---
-        // This converts <script> tags into harmless text (&lt;script&gt;)
-        // so hackers cannot inject malicious code into the chat window!
+        // --- LAYER 2: XSS SANITIZATION ---
         String safeContent = HtmlUtils.htmlEscape(chatMessage.getContent());
         chatMessage.setContent(safeContent);
         // -----------------------------------------------------------
 
-        // Route the clean, verified message to the recipient
+        // --- LAYER 3: DATABASE PERSISTENCE ---
+        // Save the clean, verified message to PostgreSQL before sending
+        chatMessageRepository.save(chatMessage);
+        // -----------------------------------------------------------
+
+        // Route the message to the recipient
         messagingTemplate.convertAndSend("/queue/messages/" + chatMessage.getRecipientEmail(), chatMessage);
     }
 
-    // --- NEW: TYPING INDICATOR ENDPOINT ---
+    // --- TYPING INDICATOR ENDPOINT ---
     @MessageMapping("/chat.typing")
     public void sendTypingIndicator(@Payload Map<String, String> payload, OAuth2AuthenticationToken token) {
         if (token == null) return; // Basic security check
