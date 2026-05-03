@@ -41,4 +41,15 @@ public class ChatController {
         // Route the clean, verified message to the recipient
         messagingTemplate.convertAndSend("/queue/messages/" + chatMessage.getRecipientEmail(), chatMessage);
     }
+
+    // --- NEW: TYPING INDICATOR ENDPOINT ---
+    @MessageMapping("/chat.typing")
+    public void sendTypingIndicator(@Payload Map<String, String> payload, OAuth2AuthenticationToken token) {
+        if (token == null) return; // Basic security check
+        
+        String recipientEmail = payload.get("recipientEmail");
+        
+        // Forward the typing status directly to the recipient's specific typing queue
+        messagingTemplate.convertAndSend("/queue/typing/" + recipientEmail, payload);
+    }
 }
