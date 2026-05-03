@@ -12,20 +12,15 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry config) {
-        // These are the prefixes the server will use to send messages BACK to the frontend
-        // /topic is generally for public chats, /queue is for private 1-on-1 chats
         config.enableSimpleBroker("/topic", "/queue");
-        
-        // This is the prefix the frontend will use to send messages TO the server
         config.setApplicationDestinationPrefixes("/app");
     }
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        // This is the initial connection point for the WebSocket
-        // setAllowedOriginPatterns("*") is important for local development to avoid CORS errors
         registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns("*")
-                .withSockJS(); // Fallback option for older browsers
+                // Explicitly allow your frontend URLs for secure WebSocket connections
+                .setAllowedOrigins("http://localhost:5173", "https://neosis-static-site.onrender.com")
+                .withSockJS(); 
     }
 }
