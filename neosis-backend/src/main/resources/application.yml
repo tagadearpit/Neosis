@@ -19,13 +19,14 @@ spring:
 
   # JPA & Hibernate Settings (Automates Table Creation)
   jpa:
+    open-in-view: false # FIX #2: Turn off open-in-view to remove the warning and optimize performance
     hibernate:
       ddl-auto: update # Automatically creates or updates your tables based on your User.java model
     show-sql: true     # Prints SQL queries to your console (helpful for debugging)
     properties:
       hibernate:
         format_sql: true
-        dialect: org.hibernate.dialect.PostgreSQLDialect
+        # FIX #1: The explicit PostgreSQLDialect line was removed from here
 
   # Google OAuth 2.0 Security Configuration
   security:
