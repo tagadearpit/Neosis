@@ -17,6 +17,10 @@ export default function NeosisChat() {
   const [notifications, setNotifications] = useState([]); 
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
+
+  // NEW: Typing Indicator States
+  const [isRemoteTyping, setIsRemoteTyping] = useState(false);
+  const typingTimeoutRef = useRef(null);
   
   const stompClientRef = useRef(null);
   const messagesEndRef = useRef(null); 
@@ -36,9 +40,10 @@ export default function NeosisChat() {
     initializeUser();
   }, []);
 
+  // Scroll to bottom when new messages arrive OR when someone starts typing
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, isRemoteTyping]);
 
   const connectWebSocket = (userEmail) => {
     const client = new Client({
@@ -52,6 +57,16 @@ export default function NeosisChat() {
         client.subscribe(`/queue/messages/${userEmail}`, (message) => {
           const incomingMessage = JSON.parse(message.body);
           setMessages((prevMessages) => [...prevMessages, incomingMessage]);
+          // If they sent a message, they definitely stopped typing
+          setIsRemoteTyping(false);
+        });
+
+        // NEW: Listen for incoming typing indicators
+        client.subscribe(`/queue/typing/${userEmail}`, (message) => {
+          const data = JSON.parse(message.body);
+          if (data.senderEmail === activeChat) {
+             setIsRemoteTyping(data.isTyping === 'true');
+          }
         });
       },
     });
@@ -78,6 +93,7 @@ export default function NeosisChat() {
       setActiveChat(emailInput);
       setMessages([]); 
       setEmailInput('');
+      setIsRemoteTyping(false); // Reset typing status on new chat
     } catch (err) {
       if (err.response && err.response.status === 404) {
         setError('Sender does not exist'); 
@@ -87,6 +103,34 @@ export default function NeosisChat() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // NEW: Broadcast typing status to the server
+  const sendTypingStatus = (isTyping) => {
+    if (stompClientRef.current && activeChat) {
+      stompClientRef.current.publish({
+        destination: '/app/chat.typing',
+        body: JSON.stringify({
+          senderEmail: currentUser.email,
+          recipientEmail: activeChat,
+          isTyping: isTyping.toString()
+        })
+      });
+    }
+  };
+
+  // NEW: Handle input changes with a debounce to prevent spamming the server
+  const handleInputChange = (e) => {
+    setNewMessage(e.target.value);
+    
+    sendTypingStatus(true);
+
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+
+    // If user stops typing for 1.5 seconds, send "is typing = false"
+    typingTimeoutRef.current = setTimeout(() => {
+      sendTypingStatus(false);
+    }, 1500);
   };
 
   const handleSendMessage = (e) => {
@@ -109,6 +153,9 @@ export default function NeosisChat() {
 
     setMessages((prev) => [...prev, chatMessage]);
     setNewMessage('');
+    
+    // Stop the typing indicator immediately when sending
+    sendTypingStatus(false);
   };
 
   return (
@@ -210,10 +257,19 @@ export default function NeosisChat() {
                 </button>
                 <div>
                   <div className="font-bold text-gray-800 text-sm truncate">{activeChat}</div>
-                  <div className="text-[10px] text-green-500 font-medium flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                    Encrypted Connection
+                  
+                  {/* Dynamic Subtitle (Typing indicator OR Secure Connection) */}
+                  <div className="text-[10px] font-medium flex items-center gap-1 mt-0.5">
+                    {isRemoteTyping ? (
+                       <span className="text-blue-500 font-bold italic animate-pulse">typing...</span>
+                    ) : (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                        <span className="text-green-500">Encrypted Connection</span>
+                      </>
+                    )}
                   </div>
+
                 </div>
               </div>
               
@@ -248,16 +304,32 @@ export default function NeosisChat() {
                       </motion.div>
                     );
                   })}
+                  
+                  {/* Animated Bouncing Dots Typing Bubble */}
+                  {isRemoteTyping && (
+                     <motion.div 
+                       initial={{ opacity: 0, y: 10, scale: 0.9 }} 
+                       animate={{ opacity: 1, y: 0, scale: 1 }} 
+                       exit={{ opacity: 0, scale: 0.9 }} 
+                       className="flex justify-start"
+                     >
+                        <div className="bg-white border border-gray-100 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm flex items-center gap-1 w-16">
+                           <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0 }} className="w-2 h-2 bg-gray-400 rounded-full" />
+                           <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0.2 }} className="w-2 h-2 bg-gray-400 rounded-full" />
+                           <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0.4 }} className="w-2 h-2 bg-gray-400 rounded-full" />
+                        </div>
+                     </motion.div>
+                  )}
                 </AnimatePresence>
                 <div ref={messagesEndRef} className="h-2" />
               </div>
 
-              {/* Message Input */}
+              {/* Message Input - Updated to use handleInputChange */}
               <form onSubmit={handleSendMessage} className="p-4 bg-white border-t border-gray-100 flex gap-3 items-center">
                 <input
                   type="text"
                   value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
+                  onChange={handleInputChange} 
                   placeholder="Type a secure message..."
                   className="flex-1 px-5 py-3.5 bg-slate-100 border-transparent rounded-full focus:bg-white focus:ring-4 focus:ring-blue-500/20 outline-none text-sm transition-all shadow-inner"
                 />
