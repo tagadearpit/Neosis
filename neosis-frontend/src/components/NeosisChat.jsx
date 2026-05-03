@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
-import { MessageSquare, AlertCircle, ArrowLeft, Bell } from 'lucide-react';
+import { MessageSquare, AlertCircle, ArrowLeft, Bell, Send } from 'lucide-react';
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
 
@@ -13,29 +13,36 @@ export default function NeosisChat() {
   const [activeChat, setActiveChat] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   
-  // New States for Real-Time logic
   const [currentUser, setCurrentUser] = useState(null);
   const [notifications, setNotifications] = useState([]); 
+  
+  // NEW: State for chat messages
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  
+  // NEW: We use a ref to store the WebSocket client so we can access it anywhere
+  const stompClientRef = useRef(null);
+  const messagesEndRef = useRef(null); // Used to auto-scroll to the latest message
 
   const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8080';
 
-  // Run once when the component loads
   useEffect(() => {
     const initializeUser = async () => {
       try {
-        // 1. Ask the backend who is currently logged into this browser
         const response = await axios.get(`${backendUrl}/api/users/me`);
         setCurrentUser(response.data);
-        
-        // 2. Once we know who we are, open a WebSocket connection
         connectWebSocket(response.data.email);
       } catch (err) {
         console.error("Could not fetch current user info", err);
       }
     };
-
     initializeUser();
   }, []);
+
+  // NEW: Auto-scroll to bottom when a new message arrives
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   const connectWebSocket = (userEmail) => {
     const client = new Client({
@@ -43,26 +50,27 @@ export default function NeosisChat() {
       onConnect: () => {
         console.log('Connected to WebSocket as', userEmail);
         
-        // 3. Listen specifically to the channel associated with our email
+        // 1. Listen for connection notifications (like before)
         client.subscribe(`/topic/notifications/${userEmail}`, (message) => {
           const notificationData = JSON.parse(message.body);
           showNotification(notificationData);
         });
-      },
-      onStompError: (frame) => {
-        console.error('Broker reported error: ' + frame.headers['message']);
+
+        // 2. NEW: Listen for actual chat messages on our personal queue
+        client.subscribe(`/queue/messages/${userEmail}`, (message) => {
+          const incomingMessage = JSON.parse(message.body);
+          setMessages((prevMessages) => [...prevMessages, incomingMessage]);
+        });
       },
     });
 
     client.activate();
+    stompClientRef.current = client; // Save the client in our ref!
   };
 
-  // Triggers the pop-up UI
   const showNotification = (data) => {
-    const id = new Date().getTime(); // Unique ID for the animation key
+    const id = new Date().getTime();
     setNotifications(prev => [...prev, { id, ...data }]);
-    
-    // Auto-remove the notification after 5 seconds
     setTimeout(() => {
       setNotifications(prev => prev.filter(n => n.id !== id));
     }, 5000);
@@ -76,6 +84,7 @@ export default function NeosisChat() {
     try {
       await axios.get(`${backendUrl}/api/users/check?email=${emailInput}`);
       setActiveChat(emailInput);
+      setMessages([]); // Clear old messages when opening a new chat
       setEmailInput('');
     } catch (err) {
       if (err.response && err.response.status === 404) {
@@ -88,10 +97,32 @@ export default function NeosisChat() {
     }
   };
 
+  // NEW: Function to send a message
+  const handleSendMessage = (e) => {
+    e.preventDefault();
+    if (newMessage.trim() === '' || !stompClientRef.current) return;
+
+    const chatMessage = {
+      senderEmail: currentUser.email,
+      recipientEmail: activeChat,
+      content: newMessage.trim()
+    };
+
+    // Send it to the server
+    stompClientRef.current.publish({
+      destination: '/app/chat.send',
+      body: JSON.stringify(chatMessage)
+    });
+
+    // Add it to our own screen immediately
+    setMessages((prev) => [...prev, chatMessage]);
+    setNewMessage('');
+  };
+
   return (
     <div className="flex h-screen bg-gray-50 items-center justify-center p-4 relative overflow-hidden">
       
-      {/* 🌟 NEW: Floating Notification Container (Top Right) 🌟 */}
+      {/* Notifications */}
       <div className="fixed top-6 right-6 z-50 flex flex-col gap-3">
         <AnimatePresence>
           {notifications.map((notif) => (
@@ -114,11 +145,11 @@ export default function NeosisChat() {
         </AnimatePresence>
       </div>
 
-      {/* Existing Chat Interface */}
+      {/* Main Container */}
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100"
+        className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100 h-[600px] flex flex-col"
       >
         <div className="p-6 bg-blue-600 text-white shadow-md z-10 relative flex justify-between items-center">
           <div>
@@ -132,82 +163,94 @@ export default function NeosisChat() {
           )}
         </div>
 
-        <div className="p-6 bg-white min-h-[300px] flex flex-col justify-center">
+        <div className="flex-1 bg-white overflow-hidden flex flex-col">
           {!activeChat ? (
-            <motion.form 
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              onSubmit={handleStartChat} 
-              className="space-y-5"
-            >
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Recipient Email
-                </label>
-                <input
-                  type="email"
-                  required
-                  value={emailInput}
-                  onChange={(e) => setEmailInput(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 outline-none"
-                  placeholder="Enter email to start chatting..."
-                />
-              </div>
+            <div className="p-6 flex flex-col justify-center h-full">
+                <form onSubmit={handleStartChat} className="space-y-5">
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Recipient Email
+                    </label>
+                    <input
+                    type="email"
+                    required
+                    value={emailInput}
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    placeholder="Enter email to start chatting..."
+                    />
+                </div>
 
-              <AnimatePresence>
                 {error && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0, y: -10 }}
-                    animate={{ opacity: 1, height: 'auto', y: 0 }}
-                    exit={{ opacity: 0, height: 0, y: -10 }}
-                    className="text-red-500 text-sm flex items-center gap-2 bg-red-50 p-3 rounded-lg border border-red-100"
-                  >
-                    <AlertCircle size={16} className="shrink-0" />
+                    <div className="text-red-500 text-sm flex items-center gap-2 bg-red-50 p-3 rounded-lg border border-red-100">
+                    <AlertCircle size={16} />
                     <span>{error}</span>
-                  </motion.div>
+                    </div>
                 )}
-              </AnimatePresence>
 
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-medium py-3 rounded-xl transition-all duration-200 flex justify-center items-center gap-2 shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
-              >
-                {isLoading ? (
-                  <span className="flex items-center gap-2">
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Checking...
-                  </span>
-                ) : (
-                  <>
+                <button
+                    type="submit"
+                    disabled={isLoading}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-xl flex justify-center items-center gap-2 shadow-sm disabled:opacity-70"
+                >
                     <MessageSquare size={18} />
-                    Start Conversation
-                  </>
-                )}
-              </button>
-            </motion.form>
+                    {isLoading ? 'Checking...' : 'Start Conversation'}
+                </button>
+                </form>
+            </div>
           ) : (
-            <motion.div
-              initial={{ x: '100%', opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              transition={{ type: 'spring', bounce: 0.1, duration: 0.5 }}
-              className="flex flex-col h-full"
-            >
-              <button 
-                onClick={() => setActiveChat(null)}
-                className="text-sm text-gray-500 mb-4 hover:text-blue-600 transition-colors flex items-center gap-1 w-fit"
-              >
-                <ArrowLeft size={16} /> Back
-              </button>
-              
-              <div className="flex-1 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center text-gray-400 p-6 text-center bg-gray-50">
-                <MessageSquare size={32} className="mb-3 text-gray-300" />
-                <p>Chat interface with</p>
-                <p className="font-medium text-gray-600 mt-1">{activeChat}</p>
-                <p className="text-xs mt-4">WebSocket connection active!</p>
+            // 🌟 NEW CHAT INTERFACE 🌟
+            <div className="flex flex-col h-full">
+              {/* Chat Header */}
+              <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center gap-3">
+                <button 
+                  onClick={() => setActiveChat(null)}
+                  className="text-gray-500 hover:text-blue-600 p-1"
+                >
+                  <ArrowLeft size={18} />
+                </button>
+                <div className="font-medium text-gray-800 text-sm truncate">{activeChat}</div>
               </div>
-            </motion.div>
+              
+              {/* Messages Area */}
+              <div className="flex-1 p-4 overflow-y-auto bg-slate-50 space-y-3">
+                {messages.map((msg, index) => {
+                  const isMe = msg.senderEmail === currentUser.email;
+                  return (
+                    <div key={index} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                      <div 
+                        className={`px-4 py-2 rounded-2xl max-w-[80%] text-sm ${
+                          isMe 
+                            ? 'bg-blue-600 text-white rounded-tr-sm' 
+                            : 'bg-white border border-gray-200 text-gray-800 rounded-tl-sm shadow-sm'
+                        }`}
+                      >
+                        {msg.content}
+                      </div>
+                    </div>
+                  );
+                })}
+                <div ref={messagesEndRef} />
+              </div>
+
+              {/* Message Input */}
+              <form onSubmit={handleSendMessage} className="p-3 bg-white border-t border-gray-100 flex gap-2">
+                <input
+                  type="text"
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  placeholder="Type a message..."
+                  className="flex-1 px-4 py-2 bg-gray-100 border-transparent rounded-full focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                />
+                <button 
+                  type="submit"
+                  disabled={!newMessage.trim()}
+                  className="bg-blue-600 hover:bg-blue-700 text-white p-2 w-10 h-10 rounded-full flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  <Send size={16} className="ml-1" />
+                </button>
+              </form>
+            </div>
           )}
         </div>
       </motion.div>
