@@ -13,7 +13,7 @@ export default function NeosisChat() {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   
-  // NEW: States for WhatsApp Architecture
+  // States for WhatsApp Architecture
   const [friends, setFriends] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -24,6 +24,7 @@ export default function NeosisChat() {
   const stompClientRef = useRef(null);
   const messagesEndRef = useRef(null); 
 
+  // This is the crucial line!
   const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8080';
 
   // 1. Initialize user and load sidebar data
@@ -265,12 +266,12 @@ export default function NeosisChat() {
         {/* ================= RIGHT SIDEBAR (Main Chat) ================= */}
         <div className={`${!activeChat ? 'hidden md:flex' : 'flex'} w-full md:w-2/3 flex-col bg-white`}>
           {!activeChat ? (
-             // Placeholder when no chat is selected
-             <div className="flex-1 flex flex-col items-center justify-center bg-slate-50 text-gray-400">
-               <MessageSquare size={64} className="mb-4 text-gray-300" />
-               <h2 className="text-xl font-medium text-gray-600">Neosis for Web</h2>
-               <p className="text-sm mt-2 max-w-xs text-center leading-relaxed">Select a contact from the sidebar to start a secure, end-to-end encrypted conversation.</p>
-             </div>
+            // Placeholder when no chat is selected
+            <div className="flex-1 flex flex-col items-center justify-center bg-slate-50 text-gray-400">
+              <MessageSquare size={64} className="mb-4 text-gray-300" />
+              <h2 className="text-xl font-medium text-gray-600">Neosis for Web</h2>
+              <p className="text-sm mt-2 max-w-xs text-center leading-relaxed">Select a contact from the sidebar to start a secure, end-to-end encrypted conversation.</p>
+            </div>
           ) : (
             // Active Chat UI
             <>
@@ -319,13 +320,13 @@ export default function NeosisChat() {
                   
                   {/* Bouncing Dots Typing Indicator */}
                   {isRemoteTyping && (
-                     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9 }} className="flex justify-start">
+                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9 }} className="flex justify-start">
                         <div className="bg-white border border-gray-100 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm flex items-center gap-1 w-16">
-                           <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0 }} className="w-2 h-2 bg-gray-400 rounded-full" />
-                           <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0.2 }} className="w-2 h-2 bg-gray-400 rounded-full" />
-                           <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0.4 }} className="w-2 h-2 bg-gray-400 rounded-full" />
+                          <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0 }} className="w-2 h-2 bg-gray-400 rounded-full" />
+                          <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0.2 }} className="w-2 h-2 bg-gray-400 rounded-full" />
+                          <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0.4 }} className="w-2 h-2 bg-gray-400 rounded-full" />
                         </div>
-                     </motion.div>
+                    </motion.div>
                   )}
                 </AnimatePresence>
                 <div ref={messagesEndRef} className="h-2" />
