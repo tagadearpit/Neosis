@@ -1,12 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
-// Added Moon and Sun icons here
 import { MessageSquare, UserPlus, Bell, Send, Check, ArrowLeft, Moon, Sun } from 'lucide-react';
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
 
 axios.defaults.withCredentials = true;
+
+// NEW: Helper function to decode HTML entities (like &#39; to ')
+const decodeHTMLEntities = (text) => {
+  if (!text) return text;
+  const textArea = document.createElement('textarea');
+  textArea.innerHTML = text;
+  return textArea.value;
+};
 
 export default function NeosisChat() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -20,6 +27,9 @@ export default function NeosisChat() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [addEmailInput, setAddEmailInput] = useState('');
 
+  // State for Unread Messages
+  const [unreadCounts, setUnreadCounts] = useState({});
+
   // Dark Mode State
   const [isDarkMode, setIsDarkMode] = useState(false);
 
@@ -27,8 +37,16 @@ export default function NeosisChat() {
   const typingTimeoutRef = useRef(null);
   const stompClientRef = useRef(null);
   const messagesEndRef = useRef(null); 
+  
+  // A Ref to keep track of the active chat inside the WebSocket connection
+  const activeChatRef = useRef(activeChat);
 
   const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8080';
+
+  // Keep the activeChatRef updated whenever you click a new friend
+  useEffect(() => {
+    activeChatRef.current = activeChat;
+  }, [activeChat]);
 
   // Toggle dark mode class on the HTML body
   useEffect(() => {
@@ -78,13 +96,21 @@ export default function NeosisChat() {
       onConnect: () => {
         client.subscribe(`/queue/messages/${userEmail}`, (message) => {
           const incomingMessage = JSON.parse(message.body);
-          setMessages((prev) => [...prev, incomingMessage]);
+          
+          if (incomingMessage.senderEmail === activeChatRef.current) {
+            setMessages((prev) => [...prev, incomingMessage]);
+          } else {
+            setUnreadCounts((prev) => ({
+              ...prev,
+              [incomingMessage.senderEmail]: (prev[incomingMessage.senderEmail] || 0) + 1
+            }));
+          }
           setIsRemoteTyping(false);
         });
         
         client.subscribe(`/queue/typing/${userEmail}`, (message) => {
           const data = JSON.parse(message.body);
-          if (data.senderEmail === activeChat) {
+          if (data.senderEmail === activeChatRef.current) {
             setIsRemoteTyping(data.isTyping === 'true');
           }
         });
@@ -121,6 +147,8 @@ export default function NeosisChat() {
   // 7. Open a chat and load history
   const openChat = async (friendEmail) => {
     setActiveChat(friendEmail);
+    setUnreadCounts(prev => ({ ...prev, [friendEmail]: 0 }));
+    
     try {
       const historyRes = await axios.get(`${backendUrl}/api/messages/history/${friendEmail}`);
       setMessages(historyRes.data);
@@ -131,7 +159,7 @@ export default function NeosisChat() {
 
   // 8. Send a Message
   const handleSendMessage = (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     if (newMessage.trim() === '' || !stompClientRef.current) return;
     
     const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -265,6 +293,13 @@ export default function NeosisChat() {
                   {friend.charAt(0).toUpperCase()}
                 </div>
                 <div className="font-semibold text-sm text-gray-800 dark:text-gray-100 truncate flex-1">{friend}</div>
+                
+                {/* Unread Messages Badge */}
+                {unreadCounts[friend] > 0 && (
+                  <div className="bg-green-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm animate-bounce-short">
+                    {unreadCounts[friend]}
+                  </div>
+                )}
               </div>
             ))}
             {friends.length === 0 && (
@@ -324,7 +359,8 @@ export default function NeosisChat() {
                       <motion.div key={index} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
                         <div className={`flex flex-col max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
                           <div className={`px-5 py-3 text-[15px] shadow-sm leading-relaxed ${isMe ? 'bg-blue-600 text-white rounded-2xl rounded-tr-sm' : 'bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 text-gray-800 dark:text-gray-100 rounded-2xl rounded-tl-sm'}`}>
-                            {msg.content}
+                            {/* NEW: Decode the message content before displaying it! */}
+                            {decodeHTMLEntities(msg.content)}
                           </div>
                           <span className="text-[10px] text-gray-400 dark:text-gray-500 mt-1 font-medium px-1">{msg.timestamp || 'Just now'}</span>
                         </div>
@@ -352,6 +388,12 @@ export default function NeosisChat() {
                   type="text" 
                   value={newMessage} 
                   onChange={handleInputChange} 
+                  onKeyDown={(e) => { 
+                    if (e.key === 'Enter') {
+                      e.preventDefault(); 
+                      handleSendMessage(e); 
+                    }
+                  }}
                   placeholder="Type a message..." 
                   className="flex-1 px-5 py-3.5 bg-slate-100 dark:bg-gray-800 dark:text-white dark:placeholder-gray-400 border-transparent rounded-full focus:bg-white dark:focus:bg-gray-700 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all shadow-inner" 
                 />
