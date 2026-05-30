@@ -7,16 +7,15 @@ import { Client } from '@stomp/stompjs';
 
 axios.defaults.withCredentials = true;
 
-// URGENT FIX 2: XSS Risk Removed. 
-// No more innerHTML. This safely replaces common encoded entities purely as strings.
+// URGENT FIX 2: XSS Risk Removed & Regex Order Fixed (Double-decode prevented)
 const decodeHTMLEntities = (text) => {
   if (!text) return text;
   return text
     .replace(/&#39;/g, "'")
     .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>');
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&'); // ← Must be last!
 };
 
 // Helper function to convert emails into clean Display Names
