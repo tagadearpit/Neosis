@@ -1,3 +1,73 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  /* Prevent layout shifts */
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  /* 100dvh perfectly handles mobile browser address bars */
+  html, body, #root {
+    height: 100dvh;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Sora', sans-serif;
+    @apply bg-slate-50 text-slate-800 overflow-hidden;
+  }
+
+  /* Safer dark mode targeting */
+  html.dark body {
+    @apply bg-slate-950 text-slate-100;
+  }
+
+  ::selection {
+    background-color: #6366f1; /* Indigo-500 */
+    color: white;
+  }
+}
+
+/* ==========================================
+   Premium Custom Scrollbar
+   ========================================== */
+
+/* 1. Firefox Support */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(156, 163, 175, 0.4) transparent;
+}
+
+html.dark .custom-scrollbar {
+  scrollbar-color: rgba(71, 85, 105, 0.5) transparent;
+}
+
+/* 2. Chrome / Safari / Edge Support */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px; /* Slightly wider for better UX */
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(156, 163, 175, 0.4);
+  border-radius: 20px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(156, 163, 175, 0.6);
+}
+
+/* Chrome Dark Mode Support */
+html.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(71, 85, 105, 0.5);
+}
+
+html.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(71, 85, 105, 0.7);
+}
