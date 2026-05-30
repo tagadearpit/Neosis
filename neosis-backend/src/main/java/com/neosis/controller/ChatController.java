@@ -36,7 +36,7 @@ public class ChatController {
         }
 
         // --- LAYER 2: XSS SANITIZATION ---
-        String safeContent = HtmlUtils.htmlEscape(chatMessage.getContent());
+        String safeContent = chatMessage.getContent();
         chatMessage.setContent(safeContent);
         // -----------------------------------------------------------
 

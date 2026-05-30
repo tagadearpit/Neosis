@@ -1,25 +1,25 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
-import { MessageSquare, UserPlus, Bell, Send, Check, ArrowLeft, Moon, Sun, Loader2 } from 'lucide-react';
+import { MessageSquare, UserPlus, Bell, Send, Check, ArrowLeft, Moon, Sun } from 'lucide-react';
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
 
 axios.defaults.withCredentials = true;
 
-// ISSUE FIX 11: Moved backendUrl outside the component so it isn't recreated on every render
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8080';
-
-// ISSUE FIX 4: Secure HTML Entity Decoding using DOMParser (Immune to XSS)
+// Helper function to decode HTML entities (like &#39; to ')
 const decodeHTMLEntities = (text) => {
   if (!text) return text;
-  const doc = new DOMParser().parseFromString(text, "text/html");
-  return doc.documentElement.textContent;
+  const textArea = document.createElement('textarea');
+  textArea.innerHTML = text;
+  return textArea.value;
 };
 
+// NEW: Helper function to convert emails into clean Display Names
 const formatName = (email) => {
   if (!email) return '';
   const namePart = email.split('@')[0];
+  // Replaces dots, dashes, and underscores with spaces, then capitalizes
   return namePart
     .split(/[\.\-_]/)
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
@@ -32,30 +32,34 @@ export default function NeosisChat() {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   
+  // States for WhatsApp Architecture
   const [friends, setFriends] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [addEmailInput, setAddEmailInput] = useState('');
-  const [unreadCounts, setUnreadCounts] = useState({});
-  const [isDarkMode, setIsDarkMode] = useState(false);
-  
-  const [isRemoteTyping, setIsRemoteTyping] = useState(false);
-  // ISSUE FIX 14: Added loading state for switching chats
-  const [isChatLoading, setIsChatLoading] = useState(false);
-  // ISSUE FIX 13: Replaced alert() with a custom Toast state
-  const [toast, setToast] = useState(null);
 
+  // State for Unread Messages
+  const [unreadCounts, setUnreadCounts] = useState({});
+
+  // Dark Mode State
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
+  const [isRemoteTyping, setIsRemoteTyping] = useState(false);
   const typingTimeoutRef = useRef(null);
   const stompClientRef = useRef(null);
   const messagesEndRef = useRef(null); 
   
+  // A Ref to keep track of the active chat inside the WebSocket connection
   const activeChatRef = useRef(activeChat);
-  // ISSUE FIX 3: Ref for currentUser to prevent stale closures in setTimeout
-  const currentUserRef = useRef(currentUser);
 
-  useEffect(() => { activeChatRef.current = activeChat; }, [activeChat]);
-  useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
+  const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8080';
 
+  // Keep the activeChatRef updated whenever you click a new friend
+  useEffect(() => {
+    activeChatRef.current = activeChat;
+  }, [activeChat]);
+
+  // Toggle dark mode class on the HTML body
   useEffect(() => {
     if (isDarkMode) {
       document.documentElement.classList.add('dark');
@@ -64,27 +68,11 @@ export default function NeosisChat() {
     }
   }, [isDarkMode]);
 
-  // ISSUE FIX 12: Wrapped in useCallback to safely use inside useEffect
-  const fetchSidebarData = useCallback(async () => {
-    try {
-      const friendsRes = await axios.get(`${BACKEND_URL}/api/contacts/friends`);
-      const pendingRes = await axios.get(`${BACKEND_URL}/api/contacts/pending`);
-      setFriends(friendsRes.data);
-      setPendingRequests(pendingRes.data);
-    } catch (err) {
-      console.error("Failed to load sidebar data", err);
-    }
-  }, []);
-
-  const showToast = (message, type = 'success') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
-  };
-
+  // 1. Initialize user and load sidebar data
   useEffect(() => {
     const initializeApp = async () => {
       try {
-        const userRes = await axios.get(`${BACKEND_URL}/api/users/me`);
+        const userRes = await axios.get(`${backendUrl}/api/users/me`);
         setCurrentUser(userRes.data);
         connectWebSocket(userRes.data.email);
         fetchSidebarData();
@@ -92,38 +80,37 @@ export default function NeosisChat() {
         console.error("Auth error", err);
       }
     };
-    
     initializeApp();
+  }, []);
 
-    // ISSUE FIX 1 & 2: Critical WebSocket and Timer Cleanup on Unmount
-    return () => {
-      if (stompClientRef.current) {
-        stompClientRef.current.deactivate();
-      }
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
-    };
-  }, [fetchSidebarData]);
-
+  // 2. Auto-scroll to bottom of chat
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isRemoteTyping]);
 
+  // 3. Fetch Friends and Requests from the backend
+  const fetchSidebarData = async () => {
+    try {
+      const friendsRes = await axios.get(`${backendUrl}/api/contacts/friends`);
+      const pendingRes = await axios.get(`${backendUrl}/api/contacts/pending`);
+      setFriends(friendsRes.data);
+      setPendingRequests(pendingRes.data);
+    } catch (err) {
+      console.error("Failed to load sidebar data", err);
+    }
+  };
+
+  // 4. Connect WebSocket for Real-Time data
   const connectWebSocket = (userEmail) => {
     const client = new Client({
-      webSocketFactory: () => new SockJS(`${BACKEND_URL}/ws`),
+      webSocketFactory: () => new SockJS(`${backendUrl}/ws`),
       onConnect: () => {
         client.subscribe(`/queue/messages/${userEmail}`, (message) => {
           const incomingMessage = JSON.parse(message.body);
           
           if (incomingMessage.senderEmail === activeChatRef.current) {
-            // ISSUE FIX 7: Deduplicate messages to prevent double-rendering if WebSocket echoes
-            setMessages((prev) => {
-              const isDuplicate = prev.some(m => m.timestamp === incomingMessage.timestamp && m.content === incomingMessage.content);
-              return isDuplicate ? prev : [...prev, incomingMessage];
-            });
-          } else if (incomingMessage.senderEmail !== currentUserRef.current?.email) {
+            setMessages((prev) => [...prev, incomingMessage]);
+          } else {
             setUnreadCounts((prev) => ({
               ...prev,
               [incomingMessage.senderEmail]: (prev[incomingMessage.senderEmail] || 0) + 1
@@ -144,63 +131,51 @@ export default function NeosisChat() {
     stompClientRef.current = client; 
   };
 
+  // 5. Send a Friend Request
   const handleSendRequest = async (e) => {
     e.preventDefault();
-    // ISSUE FIX 6: Basic Email Input Validation
-    if (!addEmailInput || !/\S+@\S+\.\S+/.test(addEmailInput)) {
-      showToast("Please enter a valid email address.", "error");
-      return;
-    }
-    
+    if(!addEmailInput) return;
     try {
-      // ISSUE FIX 5: Sent data securely in HTTP Body (Form-Data) instead of URL Query string
-      await axios.post(`${BACKEND_URL}/api/contacts/request`, new URLSearchParams({ receiverEmail: addEmailInput }));
+      await axios.post(`${backendUrl}/api/contacts/request?receiverEmail=${addEmailInput}`);
       setAddEmailInput('');
-      showToast("Friend request sent!");
+      alert("Friend request sent!");
     } catch (err) {
-      showToast("Failed to send request. Make sure the email is correct.", "error");
+      alert("Failed to send request. Make sure the email is correct.");
     }
   };
 
+  // 6. Accept a Friend Request
   const handleAcceptRequest = async (requestId) => {
     try {
-      // ISSUE FIX 5: Sent data securely in HTTP Body
-      await axios.post(`${BACKEND_URL}/api/contacts/accept`, new URLSearchParams({ requestId: requestId }));
+      await axios.post(`${backendUrl}/api/contacts/accept?requestId=${requestId}`);
       fetchSidebarData(); 
       setShowNotifications(false); 
-      showToast("Friend request accepted!");
     } catch (err) {
       console.error("Failed to accept request", err);
     }
   };
 
+  // 7. Open a chat and load history
   const openChat = async (friendEmail) => {
     setActiveChat(friendEmail);
-    // ISSUE FIX 8: Clear immediately to prevent UI flash of old conversation
-    setMessages([]);
     setUnreadCounts(prev => ({ ...prev, [friendEmail]: 0 }));
-    setIsChatLoading(true);
     
     try {
-      const historyRes = await axios.get(`${BACKEND_URL}/api/messages/history/${friendEmail}`);
+      const historyRes = await axios.get(`${backendUrl}/api/messages/history/${friendEmail}`);
       setMessages(historyRes.data);
     } catch (err) {
       console.error("Failed to load history", err);
-      showToast("Failed to load chat history.", "error");
-    } finally {
-      setIsChatLoading(false);
     }
   };
 
+  // 8. Send a Message
   const handleSendMessage = (e) => {
     if (e) e.preventDefault();
     if (newMessage.trim() === '' || !stompClientRef.current) return;
     
     const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const uniqueId = Date.now().toString(); // Helps with React keys and deduplication
     
     const chatMessage = {
-      id: uniqueId,
       senderEmail: currentUser.email,
       recipientEmail: activeChat,
       content: newMessage.trim(),
@@ -213,14 +188,14 @@ export default function NeosisChat() {
     sendTypingStatus(false);
   };
 
+  // 9. Handle Typing Indicators
   const sendTypingStatus = (isTyping) => {
-    // ISSUE FIX 3: Guard clause against stale or uninitialized state
-    if (!stompClientRef.current || !activeChatRef.current || !currentUserRef.current) return;
-    
-    stompClientRef.current.publish({
-      destination: '/app/chat.typing',
-      body: JSON.stringify({ senderEmail: currentUserRef.current.email, recipientEmail: activeChatRef.current, isTyping: isTyping.toString() })
-    });
+    if (stompClientRef.current && activeChat) {
+      stompClientRef.current.publish({
+        destination: '/app/chat.typing',
+        body: JSON.stringify({ senderEmail: currentUser.email, recipientEmail: activeChat, isTyping: isTyping.toString() })
+      });
+    }
   };
 
   const handleInputChange = (e) => {
@@ -230,11 +205,12 @@ export default function NeosisChat() {
     typingTimeoutRef.current = setTimeout(() => sendTypingStatus(false), 1500);
   };
 
-  // Skeleton Loading Screen
-  if (!currentUser) {
+  // NEW: Beautiful Skeleton Loader (Replaces the "Loading Neosis..." text)
+  if(!currentUser) {
     return (
       <div className="flex h-screen bg-slate-100 dark:bg-gray-950 p-4 relative transition-colors duration-300">
         <div className="w-full max-w-6xl mx-auto bg-white dark:bg-gray-900 rounded-3xl shadow-2xl overflow-hidden border border-gray-100 dark:border-gray-800 flex h-full animate-pulse transition-colors duration-300">
+          
           <div className="w-full md:w-1/3 bg-slate-50 dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
             <div className="h-[76px] bg-blue-200/50 dark:bg-blue-900/30 w-full"></div>
             <div className="p-4 border-b border-gray-200 dark:border-gray-700">
@@ -249,6 +225,7 @@ export default function NeosisChat() {
               ))}
             </div>
           </div>
+
           <div className="hidden md:flex w-2/3 flex-col bg-white dark:bg-gray-900">
             <div className="h-[76px] border-b border-gray-100 dark:border-gray-800 flex items-center px-6 gap-4">
               <div className="w-10 h-10 bg-gray-200 dark:bg-gray-800 rounded-full"></div>
@@ -260,6 +237,7 @@ export default function NeosisChat() {
             <div className="flex-1 p-6 space-y-6">
               <div className="flex justify-end"><div className="h-12 bg-gray-200 dark:bg-gray-800 rounded-2xl rounded-tr-sm w-1/3"></div></div>
               <div className="flex justify-start"><div className="h-12 bg-gray-200 dark:bg-gray-800 rounded-2xl rounded-tl-sm w-1/4"></div></div>
+              <div className="flex justify-end"><div className="h-16 bg-gray-200 dark:bg-gray-800 rounded-2xl rounded-tr-sm w-1/2"></div></div>
             </div>
             <div className="p-4 border-t border-gray-100 dark:border-gray-800 flex gap-3">
               <div className="flex-1 h-[52px] bg-gray-100 dark:bg-gray-800 rounded-full"></div>
@@ -273,38 +251,27 @@ export default function NeosisChat() {
 
   return (
     <div className="flex h-screen bg-slate-100 dark:bg-gray-950 p-4 relative transition-colors duration-300">
-      
-      {/* Toast Notification */}
-      <AnimatePresence>
-        {toast && (
-          <motion.div 
-            initial={{ opacity: 0, y: -20 }} 
-            animate={{ opacity: 1, y: 0 }} 
-            exit={{ opacity: 0, y: -20 }} 
-            className={`absolute top-8 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-full text-sm font-bold shadow-xl flex items-center gap-2 ${toast.type === 'error' ? 'bg-red-500 text-white' : 'bg-green-500 text-white'}`}
-          >
-            {toast.type === 'success' && <Check size={16} />}
-            {toast.message}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       <div className="w-full max-w-6xl mx-auto bg-white dark:bg-gray-900 rounded-3xl shadow-2xl overflow-hidden border border-gray-100 dark:border-gray-800 flex h-full transition-colors duration-300">
         
         {/* ================= LEFT SIDEBAR ================= */}
         <div className={`${activeChat ? 'hidden md:flex' : 'flex'} w-full md:w-1/3 bg-slate-50 dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex-col transition-colors duration-300`}>
+          
           <div className="p-5 bg-gradient-to-r from-blue-700 to-blue-800 text-white flex justify-between items-center z-20">
             <div>
               <h2 className="text-xl font-bold tracking-wide">NEOSIS</h2>
+              {/* UI UPDATE: Displays Formatted Name instead of full email */}
               <p className="text-xs text-blue-200 mt-1">{currentUser.name || formatName(currentUser.email)}</p>
             </div>
+            
             <div className="flex items-center gap-2">
               <button 
                 onClick={() => setIsDarkMode(!isDarkMode)} 
                 className="p-2 bg-white/10 rounded-full hover:bg-white/20 transition"
+                title="Toggle Dark Mode"
               >
                 {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
               </button>
+
               <div className="relative">
                 <button 
                   onClick={() => setShowNotifications(!showNotifications)} 
@@ -315,6 +282,7 @@ export default function NeosisChat() {
                     <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-blue-800 animate-pulse"></span>
                   )}
                 </button>
+                
                 <AnimatePresence>
                   {showNotifications && (
                     <motion.div 
@@ -332,6 +300,7 @@ export default function NeosisChat() {
                       ) : (
                         pendingRequests.map(req => (
                           <div key={req.id} className="p-3 border-b dark:border-gray-700 flex justify-between items-center hover:bg-gray-50 dark:hover:bg-gray-700 transition">
+                            {/* UI UPDATE: Formats incoming friend request names */}
                             <span className="text-sm truncate w-2/3" title={req.senderEmail}>{formatName(req.senderEmail)}</span>
                             <button 
                               onClick={() => handleAcceptRequest(req.id)} 
@@ -356,6 +325,7 @@ export default function NeosisChat() {
               onChange={(e) => setAddEmailInput(e.target.value)} 
               placeholder="Add contact by email..." 
               className="flex-1 bg-gray-100 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400 rounded-full px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 transition" 
+              required 
             />
             <button type="submit" className="bg-blue-600 text-white p-2 rounded-full hover:bg-blue-700 transition">
               <UserPlus size={18}/>
@@ -370,8 +340,10 @@ export default function NeosisChat() {
                 className={`p-4 border-b border-gray-100 dark:border-gray-700 cursor-pointer transition-colors flex items-center gap-3 ${activeChat === friend ? 'bg-blue-50 dark:bg-blue-900/30 border-l-4 border-l-blue-600' : 'hover:bg-gray-50 dark:hover:bg-gray-700'}`}
               >
                 <div className="w-10 h-10 bg-gradient-to-br from-blue-100 to-blue-200 dark:from-blue-900 dark:to-blue-800 rounded-full flex items-center justify-center text-blue-700 dark:text-blue-300 font-bold text-lg">
+                  {/* UI UPDATE: Extract first letter of their formatted name */}
                   {formatName(friend).charAt(0).toUpperCase()}
                 </div>
+                {/* UI UPDATE: Show formatted name in sidebar */}
                 <div className="font-semibold text-sm text-gray-800 dark:text-gray-100 truncate flex-1">{formatName(friend)}</div>
                 
                 {unreadCounts[friend] > 0 && (
@@ -412,6 +384,7 @@ export default function NeosisChat() {
                   {formatName(activeChat).charAt(0).toUpperCase()}
                 </div>
                 <div>
+                  {/* UI UPDATE: Show formatted name in Chat Header */}
                   <div className="font-bold text-gray-800 dark:text-gray-100">{formatName(activeChat)}</div>
                   <div className="text-[11px] font-medium flex items-center gap-1 mt-0.5">
                     {isRemoteTyping ? (
@@ -427,47 +400,45 @@ export default function NeosisChat() {
               </div>
               
               <div className="flex-1 p-6 overflow-y-auto bg-slate-50 dark:bg-gray-950 space-y-4" style={{ backgroundImage: 'radial-gradient(var(--tw-gradient-stops))' }}>
-                {isChatLoading ? (
-                  <div className="flex justify-center items-center h-full">
-                    <Loader2 className="animate-spin text-blue-500" size={32} />
-                  </div>
-                ) : (
-                  <AnimatePresence>
-                    {messages.map((msg, index) => {
-                      const isMe = msg.senderEmail === currentUser.email;
-                      // ISSUE FIX 10: Use unique keys instead of pure array index
-                      return (
-                        <motion.div key={msg.id || `${index}-${msg.timestamp}`} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                          <div className={`flex flex-col max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
-                            <div className={`px-5 py-3 text-[15px] shadow-sm leading-relaxed break-words ${isMe ? 'bg-blue-600 text-white rounded-2xl rounded-tr-sm' : 'bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 text-gray-800 dark:text-gray-100 rounded-2xl rounded-tl-sm'}`}>
-                              {decodeHTMLEntities(msg.content)}
-                            </div>
-                            <span className="text-[10px] text-gray-400 dark:text-gray-500 mt-1 font-medium px-1">{msg.timestamp || 'Just now'}</span>
+                <AnimatePresence>
+                  {messages.map((msg, index) => {
+                    const isMe = msg.senderEmail === currentUser.email;
+                    return (
+                      <motion.div key={index} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`flex flex-col max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
+                          <div className={`px-5 py-3 text-[15px] shadow-sm leading-relaxed ${isMe ? 'bg-blue-600 text-white rounded-2xl rounded-tr-sm' : 'bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 text-gray-800 dark:text-gray-100 rounded-2xl rounded-tl-sm'}`}>
+                            {decodeHTMLEntities(msg.content)}
                           </div>
-                        </motion.div>
-                      );
-                    })}
-                    
-                    {isRemoteTyping && (
-                      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9 }} className="flex justify-start">
-                          <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm flex items-center gap-1 w-16">
-                            <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0 }} className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full" />
-                            <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0.2 }} className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full" />
-                            <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0.4 }} className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full" />
-                          </div>
+                          <span className="text-[10px] text-gray-400 dark:text-gray-500 mt-1 font-medium px-1">{msg.timestamp || 'Just now'}</span>
+                        </div>
                       </motion.div>
-                    )}
-                  </AnimatePresence>
-                )}
+                    );
+                  })}
+                  
+                  {isRemoteTyping && (
+                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9 }} className="flex justify-start">
+                        <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm flex items-center gap-1 w-16">
+                          <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0 }} className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full" />
+                          <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0.2 }} className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full" />
+                          <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0.4 }} className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full" />
+                        </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
                 <div ref={messagesEndRef} className="h-2" />
               </div>
 
-              {/* ISSUE FIX 15: Removed redundant onKeyDown, as standard HTML <form> onSubmit handles the 'Enter' key natively */}
               <form onSubmit={handleSendMessage} className="p-4 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 flex gap-3 transition-colors duration-300">
                 <input 
                   type="text" 
                   value={newMessage} 
                   onChange={handleInputChange} 
+                  onKeyDown={(e) => { 
+                    if (e.key === 'Enter') {
+                      e.preventDefault(); 
+                      handleSendMessage(e); 
+                    }
+                  }}
                   placeholder="Type a message..." 
                   className="flex-1 px-5 py-3.5 bg-slate-100 dark:bg-gray-800 dark:text-white dark:placeholder-gray-400 border-transparent rounded-full focus:bg-white dark:focus:bg-gray-700 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all shadow-inner" 
                 />
