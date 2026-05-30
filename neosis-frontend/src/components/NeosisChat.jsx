@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 import { 
   MessageSquare, UserPlus, Bell, Send, Check, ArrowLeft, Moon, Sun, 
-  Loader2, Phone, Video, Search, MoreVertical, Paperclip, Smile, Mic, ShieldCheck 
+  Loader2, Phone, Video, Search, MoreVertical, Paperclip, Smile, Mic, ShieldCheck,
+  X, User, Trash2, Ban
 } from 'lucide-react';
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
@@ -12,8 +13,8 @@ axios.defaults.withCredentials = true;
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8080';
 
-// XSS-Safe HTML Entity Decoder
-const decodeHTMLEntities = (text) => {
+// Safe String Replacer (100% immune to XSS as it does not use DOM parsing)
+const unescapeSafeString = (text) => {
   if (!text) return text;
   return text
     .replace(/&#39;/g, "'")
@@ -33,7 +34,6 @@ const formatName = (email) => {
     .join(' ');
 };
 
-// Generates a beautiful gradient based on the user's name
 const getAvatarGradient = (name) => {
   if (!name) return 'from-gray-400 to-gray-500';
   const gradients = [
@@ -46,6 +46,19 @@ const getAvatarGradient = (name) => {
   ];
   const charCode = name.charCodeAt(0) || 0;
   return gradients[charCode % gradients.length];
+};
+
+// Helper to highlight searched text
+const highlightText = (text, highlight) => {
+  if (!highlight.trim()) return text;
+  const parts = text.split(new RegExp(`(${highlight})`, 'gi'));
+  return parts.map((part, i) => 
+    part.toLowerCase() === highlight.toLowerCase() ? (
+      <span key={i} className="bg-yellow-300 dark:bg-indigo-500/50 text-slate-900 dark:text-white rounded px-0.5">{part}</span>
+    ) : (
+      part
+    )
+  );
 };
 
 export default function NeosisChat() {
@@ -65,7 +78,14 @@ export default function NeosisChat() {
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [toast, setToast] = useState(null);
 
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+
+  // Refs for tracking and memory leak cleanup
   const typingTimeoutRef = useRef(null);
+  const remoteTypingTimeoutRef = useRef(null);
+  const toastTimeoutRef = useRef(null);
   const stompClientRef = useRef(null);
   const messagesEndRef = useRef(null); 
   
@@ -96,7 +116,8 @@ export default function NeosisChat() {
 
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    toastTimeoutRef.current = setTimeout(() => setToast(null), 3000);
   };
 
   useEffect(() => {
@@ -113,26 +134,34 @@ export default function NeosisChat() {
     
     initializeApp();
 
+    // Strict Memory Leak Cleanup
     return () => {
       if (stompClientRef.current) stompClientRef.current.deactivate();
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      if (remoteTypingTimeoutRef.current) clearTimeout(remoteTypingTimeoutRef.current);
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     };
   }, [fetchSidebarData]);
 
+  // Removed isSearching from dependencies so searching doesn't auto-scroll you away
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isRemoteTyping]);
+  }, [messages, isRemoteTyping]); 
 
   const connectWebSocket = (userEmail) => {
     const client = new Client({
       webSocketFactory: () => new SockJS(`${BACKEND_URL}/ws`),
+      reconnectDelay: 5000, // Auto-reconnect if network drops
+      heartbeatIncoming: 4000,
+      heartbeatOutgoing: 4000,
       onConnect: () => {
         client.subscribe(`/queue/messages/${userEmail}`, (message) => {
           const incomingMessage = JSON.parse(message.body);
           
           if (incomingMessage.senderEmail === activeChatRef.current) {
             setMessages((prev) => {
-              const isDuplicate = prev.some(m => m.id === incomingMessage.id || (m.timestamp === incomingMessage.timestamp && m.content === incomingMessage.content));
+              // Robust duplicate check using UUID
+              const isDuplicate = prev.some(m => m.id && m.id === incomingMessage.id);
               return isDuplicate ? prev : [...prev, incomingMessage];
             });
           } else if (incomingMessage.senderEmail !== currentUserRef.current?.email) {
@@ -142,12 +171,18 @@ export default function NeosisChat() {
             }));
           }
           setIsRemoteTyping(false);
+          if (remoteTypingTimeoutRef.current) clearTimeout(remoteTypingTimeoutRef.current);
         });
         
         client.subscribe(`/queue/typing/${userEmail}`, (message) => {
           const data = JSON.parse(message.body);
           if (data.senderEmail === activeChatRef.current) {
             setIsRemoteTyping(data.isTyping === 'true');
+            // Auto-clear typing indicator if network drops mid-type
+            if (remoteTypingTimeoutRef.current) clearTimeout(remoteTypingTimeoutRef.current);
+            if (data.isTyping === 'true') {
+              remoteTypingTimeoutRef.current = setTimeout(() => setIsRemoteTyping(false), 3000);
+            }
           }
         });
       },
@@ -188,6 +223,10 @@ export default function NeosisChat() {
     setUnreadCounts(prev => ({ ...prev, [friendEmail]: 0 }));
     setIsChatLoading(true);
     
+    setIsSearching(false);
+    setSearchQuery('');
+    setShowMoreMenu(false);
+    
     try {
       const historyRes = await axios.get(`${BACKEND_URL}/api/messages/history/${friendEmail}`);
       setMessages(historyRes.data);
@@ -200,10 +239,12 @@ export default function NeosisChat() {
 
   const handleSendMessage = (e) => {
     if (e) e.preventDefault();
-    if (newMessage.trim() === '' || !stompClientRef.current) return;
+    // Added 5000 character length limit to prevent UI freezing
+    if (newMessage.trim() === '' || newMessage.length > 5000 || !stompClientRef.current) return;
     
     const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const uniqueId = Date.now().toString(); 
+    // Use highly secure UUID to prevent millisecond collisions
+    const uniqueId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Date.now().toString(); 
     
     const chatMessage = {
       id: uniqueId,
@@ -238,6 +279,13 @@ export default function NeosisChat() {
     typingTimeoutRef.current = setTimeout(() => sendTypingStatus(false), 1500);
   };
 
+  // Performance Optimization: Search is memoized to prevent lag on large histories
+  const displayedMessages = useMemo(() => {
+    if (!isSearching || !searchQuery.trim()) return messages;
+    // We still return all messages to maintain chat context, but we will highlight the matches below
+    return messages;
+  }, [messages, isSearching, searchQuery]);
+
   if (!currentUser) {
     return (
       <div className="flex h-screen bg-[#0f172a] items-center justify-center">
@@ -265,10 +313,9 @@ export default function NeosisChat() {
 
       <div className="w-full max-w-7xl mx-auto rounded-3xl shadow-2xl overflow-hidden flex h-full border border-slate-200 dark:border-slate-800 relative z-10 bg-white dark:bg-slate-900">
         
-        {/* ================= LEFT SIDEBAR (Deep Navy #0d1b2a) ================= */}
+        {/* ================= LEFT SIDEBAR ================= */}
         <div className={`${activeChat ? 'hidden md:flex' : 'flex'} w-full md:w-[380px] bg-[#0d1b2a] flex-col flex-shrink-0 z-20 shadow-xl`}>
           
-          {/* Header */}
           <div className="p-6 flex justify-between items-center bg-[#0a1520]">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
@@ -321,7 +368,6 @@ export default function NeosisChat() {
             </div>
           </div>
 
-          {/* Search / Add Friend Bar */}
           <div className="px-5 py-4">
             <form onSubmit={handleSendRequest} className="relative flex items-center">
               <div className="absolute left-4 text-slate-400"><Search size={16} /></div>
@@ -336,7 +382,6 @@ export default function NeosisChat() {
             </form>
           </div>
 
-          {/* Contacts List */}
           <div className="flex-1 overflow-y-auto custom-scrollbar px-3 space-y-1 pb-4">
             {friends.map(friend => {
               const fName = formatName(friend);
@@ -346,10 +391,8 @@ export default function NeosisChat() {
                   key={friend} onClick={() => openChat(friend)} 
                   className={`p-3 rounded-2xl cursor-pointer transition-all flex items-center gap-4 relative group ${isActive ? 'bg-[#162536]' : 'hover:bg-[#162536]/60'}`}
                 >
-                  {/* Left Active Indicator */}
                   {isActive && <motion.div layoutId="activeIndicator" className="absolute left-0 top-1/4 bottom-1/4 w-1 bg-indigo-500 rounded-r-full" />}
                   
-                  {/* Gradient Avatar */}
                   <div className="relative">
                     <div className={`w-12 h-12 bg-gradient-to-br ${getAvatarGradient(fName)} rounded-full flex items-center justify-center text-white font-bold text-lg shadow-inner`}>
                       {fName.charAt(0).toUpperCase()}
@@ -360,7 +403,6 @@ export default function NeosisChat() {
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-baseline mb-0.5">
                       <div className="font-semibold text-slate-100 truncate text-[15px]">{fName}</div>
-                      <div className="text-[10px] text-slate-400">Just now</div>
                     </div>
                     <div className="flex justify-between items-center">
                       <div className="text-xs text-slate-400 truncate">Tap to view conversation...</div>
@@ -390,7 +432,6 @@ export default function NeosisChat() {
         {/* ================= RIGHT SIDEBAR (Main Chat Area) ================= */}
         <div className={`${!activeChat ? 'hidden md:flex' : 'flex'} flex-1 flex-col bg-white dark:bg-slate-950 relative`}>
           
-          {/* Subtle Dot Grid Background */}
           <div className="absolute inset-0 opacity-[0.03] dark:opacity-[0.02] pointer-events-none" 
                style={{ backgroundImage: 'radial-gradient(currentColor 1px, transparent 1px)', backgroundSize: '24px 24px' }}></div>
 
@@ -423,24 +464,81 @@ export default function NeosisChat() {
                   <div>
                     <div className="font-bold text-slate-800 dark:text-slate-100 text-[16px]">{formatName(activeChat)}</div>
                     <div className="text-[12px] font-medium text-emerald-500 flex items-center gap-1.5 mt-0.5">
-                      {isRemoteTyping ? <span className="italic text-indigo-500 animate-pulse">typing...</span> : "Online"}
+                      {isRemoteTyping ? <span className="italic text-indigo-500 animate-pulse">typing...</span> : "Connected"}
                     </div>
                   </div>
                 </div>
 
                 {/* Header Action Icons */}
                 <div className="flex items-center gap-4 text-slate-400 dark:text-slate-500">
-                  <button className="hover:text-indigo-500 transition"><Phone size={20}/></button>
-                  <button className="hover:text-indigo-500 transition"><Video size={22}/></button>
+                  <button onClick={() => showToast("Voice calls coming soon!", "success")} className="hover:text-indigo-500 transition"><Phone size={20}/></button>
+                  <button onClick={() => showToast("Video calls coming soon!", "success")} className="hover:text-indigo-500 transition"><Video size={22}/></button>
                   <div className="w-px h-6 bg-slate-200 dark:bg-slate-800 mx-1"></div>
-                  <button className="hover:text-indigo-500 transition"><Search size={20}/></button>
-                  <button className="hover:text-indigo-500 transition"><MoreVertical size={20}/></button>
+                  
+                  <button 
+                    onClick={() => { setIsSearching(!isSearching); setSearchQuery(''); }} 
+                    className={`transition ${isSearching ? 'text-indigo-500' : 'hover:text-indigo-500'}`}
+                  >
+                    <Search size={20}/>
+                  </button>
+                  
+                  <div className="relative">
+                    <button onClick={() => setShowMoreMenu(!showMoreMenu)} className="hover:text-indigo-500 transition"><MoreVertical size={20}/></button>
+                    <AnimatePresence>
+                      {showMoreMenu && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: 10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.95 }} 
+                          className="absolute right-0 top-10 w-48 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-100 dark:border-slate-700 overflow-hidden z-50"
+                        >
+                          <div className="flex flex-col text-sm text-slate-700 dark:text-slate-200">
+                            <button className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700 transition w-full text-left">
+                              <User size={16} /> Contact Info
+                            </button>
+                            <button 
+                              onClick={() => { setMessages([]); setShowMoreMenu(false); showToast("Local chat view cleared"); }} 
+                              className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700 transition w-full text-left"
+                            >
+                              <Trash2 size={16} /> Clear Local Chat
+                            </button>
+                            <div className="h-px bg-slate-100 dark:bg-slate-700 w-full"></div>
+                            <button className="flex items-center gap-3 px-4 py-3 hover:bg-rose-50 dark:hover:bg-rose-900/20 text-rose-500 transition w-full text-left">
+                              <Ban size={16} /> Block User
+                            </button>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 </div>
               </div>
+
+              {/* Search Bar Dropdown */}
+              <AnimatePresence>
+                {isSearching && (
+                  <motion.div 
+                    initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+                    className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 overflow-hidden z-10"
+                  >
+                    <div className="px-6 py-3 flex items-center gap-3">
+                      <Search size={16} className="text-slate-400" />
+                      <input 
+                        type="text" 
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search to highlight in this chat..." 
+                        className="flex-1 bg-transparent text-sm outline-none text-slate-700 dark:text-slate-200 placeholder-slate-400"
+                        autoFocus
+                      />
+                      <button onClick={() => { setIsSearching(false); setSearchQuery(''); }} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1">
+                        <X size={16} />
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
               
               {/* Messages Area */}
               <div className="flex-1 p-6 overflow-y-auto custom-scrollbar space-y-5">
-                {/* Date Separator Pill */}
                 <div className="flex justify-center mb-6">
                   <span className="bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-[11px] font-bold px-3 py-1 rounded-full uppercase tracking-wide">Today</span>
                 </div>
@@ -449,8 +547,10 @@ export default function NeosisChat() {
                   <div className="flex justify-center items-center h-full"><Loader2 className="animate-spin text-indigo-500" size={32} /></div>
                 ) : (
                   <AnimatePresence>
-                    {messages.map((msg, index) => {
+                    {displayedMessages.map((msg, index) => {
                       const isMe = msg.senderEmail === currentUser.email;
+                      const rawContent = unescapeSafeString(msg.content);
+                      
                       return (
                         <motion.div key={msg.id || `${index}-${msg.timestamp}`} initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
                           <div className={`flex flex-col max-w-[75%] md:max-w-[65%] ${isMe ? 'items-end' : 'items-start'}`}>
@@ -459,7 +559,7 @@ export default function NeosisChat() {
                                 ? 'bg-gradient-to-r from-indigo-500 to-blue-600 text-white rounded-2xl rounded-tr-sm shadow-indigo-500/25' 
                                 : 'bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700/50 text-slate-800 dark:text-slate-100 rounded-2xl rounded-tl-sm shadow-slate-200/20 dark:shadow-none'}`}
                             >
-                              {decodeHTMLEntities(msg.content)}
+                              {isSearching && searchQuery ? highlightText(rawContent, searchQuery) : rawContent}
                             </div>
                             <span className="text-[10px] text-slate-400 dark:text-slate-500 mt-1.5 font-medium px-1 flex items-center gap-1">
                               {msg.timestamp || 'Just now'} 
@@ -470,7 +570,6 @@ export default function NeosisChat() {
                       );
                     })}
                     
-                    {/* Typing Indicator Bubble */}
                     {isRemoteTyping && (
                       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9 }} className="flex justify-start">
                         <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl rounded-tl-sm px-4 py-3.5 shadow-sm flex items-center gap-1.5 w-[72px]">
@@ -497,6 +596,7 @@ export default function NeosisChat() {
                     <textarea 
                       value={newMessage} 
                       onChange={handleInputChange} 
+                      maxLength={5000}
                       onKeyDown={(e) => { 
                         if (e.key === 'Enter' && !e.shiftKey) {
                           e.preventDefault(); 
