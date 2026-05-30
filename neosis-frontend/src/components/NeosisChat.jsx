@@ -1,13 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
-import { MessageSquare, UserPlus, Bell, Send, Check, ArrowLeft, Moon, Sun } from 'lucide-react';
+import { 
+  MessageSquare, UserPlus, Bell, Send, Check, ArrowLeft, Moon, Sun, 
+  Loader2, Phone, Video, Search, MoreVertical, Paperclip, Smile, Mic, ShieldCheck 
+} from 'lucide-react';
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
 
 axios.defaults.withCredentials = true;
 
-// URGENT FIX 2: XSS Risk Removed & Regex Order Fixed (Double-decode prevented)
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8080';
+
+// XSS-Safe HTML Entity Decoder
 const decodeHTMLEntities = (text) => {
   if (!text) return text;
   return text
@@ -15,10 +20,10 @@ const decodeHTMLEntities = (text) => {
     .replace(/&quot;/g, '"')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&'); // ← Must be last!
+    .replace(/&amp;/g, '&'); 
 };
 
-// Helper function to convert emails into clean Display Names
+// Formats email into clean names
 const formatName = (email) => {
   if (!email) return '';
   const namePart = email.split('@')[0];
@@ -26,6 +31,21 @@ const formatName = (email) => {
     .split(/[\.\-_]/)
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
+};
+
+// Generates a beautiful gradient based on the user's name
+const getAvatarGradient = (name) => {
+  if (!name) return 'from-gray-400 to-gray-500';
+  const gradients = [
+    'from-indigo-500 to-blue-500',
+    'from-emerald-400 to-teal-500',
+    'from-pink-500 to-rose-500',
+    'from-amber-400 to-orange-500',
+    'from-violet-500 to-purple-500',
+    'from-cyan-400 to-blue-600'
+  ];
+  const charCode = name.charCodeAt(0) || 0;
+  return gradients[charCode % gradients.length];
 };
 
 export default function NeosisChat() {
@@ -40,25 +60,20 @@ export default function NeosisChat() {
   const [addEmailInput, setAddEmailInput] = useState('');
   const [unreadCounts, setUnreadCounts] = useState({});
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [isRemoteTyping, setIsRemoteTyping] = useState(false);
   
+  const [isRemoteTyping, setIsRemoteTyping] = useState(false);
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const [toast, setToast] = useState(null);
+
   const typingTimeoutRef = useRef(null);
   const stompClientRef = useRef(null);
   const messagesEndRef = useRef(null); 
   
-  // Refs to keep track of state inside the WebSocket connection and timeouts
   const activeChatRef = useRef(activeChat);
   const currentUserRef = useRef(currentUser);
 
-  const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8080';
-
-  useEffect(() => {
-    activeChatRef.current = activeChat;
-  }, [activeChat]);
-
-  useEffect(() => {
-    currentUserRef.current = currentUser;
-  }, [currentUser]);
+  useEffect(() => { activeChatRef.current = activeChat; }, [activeChat]);
+  useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
 
   useEffect(() => {
     if (isDarkMode) {
@@ -68,11 +83,26 @@ export default function NeosisChat() {
     }
   }, [isDarkMode]);
 
-  // 1. Initialize user and load sidebar data
+  const fetchSidebarData = useCallback(async () => {
+    try {
+      const friendsRes = await axios.get(`${BACKEND_URL}/api/contacts/friends`);
+      const pendingRes = await axios.get(`${BACKEND_URL}/api/contacts/pending`);
+      setFriends(friendsRes.data);
+      setPendingRequests(pendingRes.data);
+    } catch (err) {
+      console.error("Failed to load sidebar data", err);
+    }
+  }, []);
+
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  };
+
   useEffect(() => {
     const initializeApp = async () => {
       try {
-        const userRes = await axios.get(`${backendUrl}/api/users/me`);
+        const userRes = await axios.get(`${BACKEND_URL}/api/users/me`);
         setCurrentUser(userRes.data);
         connectWebSocket(userRes.data.email);
         fetchSidebarData();
@@ -83,45 +113,29 @@ export default function NeosisChat() {
     
     initializeApp();
 
-    // URGENT FIX 1: WebSocket and Timer Cleanup on Unmount
     return () => {
-      if (stompClientRef.current) {
-        stompClientRef.current.deactivate();
-      }
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
+      if (stompClientRef.current) stompClientRef.current.deactivate();
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     };
-  }, []); // Empty dependency array, safe because backendUrl is static
+  }, [fetchSidebarData]);
 
-  // 2. Auto-scroll to bottom of chat
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isRemoteTyping]);
 
-  // 3. Fetch Friends and Requests from the backend
-  const fetchSidebarData = async () => {
-    try {
-      const friendsRes = await axios.get(`${backendUrl}/api/contacts/friends`);
-      const pendingRes = await axios.get(`${backendUrl}/api/contacts/pending`);
-      setFriends(friendsRes.data);
-      setPendingRequests(pendingRes.data);
-    } catch (err) {
-      console.error("Failed to load sidebar data", err);
-    }
-  };
-
-  // 4. Connect WebSocket for Real-Time data
   const connectWebSocket = (userEmail) => {
     const client = new Client({
-      webSocketFactory: () => new SockJS(`${backendUrl}/ws`),
+      webSocketFactory: () => new SockJS(`${BACKEND_URL}/ws`),
       onConnect: () => {
         client.subscribe(`/queue/messages/${userEmail}`, (message) => {
           const incomingMessage = JSON.parse(message.body);
           
           if (incomingMessage.senderEmail === activeChatRef.current) {
-            setMessages((prev) => [...prev, incomingMessage]);
-          } else {
+            setMessages((prev) => {
+              const isDuplicate = prev.some(m => m.id === incomingMessage.id || (m.timestamp === incomingMessage.timestamp && m.content === incomingMessage.content));
+              return isDuplicate ? prev : [...prev, incomingMessage];
+            });
+          } else if (incomingMessage.senderEmail !== currentUserRef.current?.email) {
             setUnreadCounts((prev) => ({
               ...prev,
               [incomingMessage.senderEmail]: (prev[incomingMessage.senderEmail] || 0) + 1
@@ -142,51 +156,57 @@ export default function NeosisChat() {
     stompClientRef.current = client; 
   };
 
-  // 5. Send a Friend Request
   const handleSendRequest = async (e) => {
     e.preventDefault();
-    if(!addEmailInput) return;
+    if (!addEmailInput || !/\S+@\S+\.\S+/.test(addEmailInput)) {
+      showToast("Please enter a valid email address.", "error");
+      return;
+    }
     try {
-      await axios.post(`${backendUrl}/api/contacts/request?receiverEmail=${addEmailInput}`);
+      await axios.post(`${BACKEND_URL}/api/contacts/request`, new URLSearchParams({ receiverEmail: addEmailInput }));
       setAddEmailInput('');
-      alert("Friend request sent!");
+      showToast("Friend request sent!");
     } catch (err) {
-      alert("Failed to send request. Make sure the email is correct.");
+      showToast("Failed to send request.", "error");
     }
   };
 
-  // 6. Accept a Friend Request
   const handleAcceptRequest = async (requestId) => {
     try {
-      await axios.post(`${backendUrl}/api/contacts/accept?requestId=${requestId}`);
+      await axios.post(`${BACKEND_URL}/api/contacts/accept`, new URLSearchParams({ requestId: requestId }));
       fetchSidebarData(); 
       setShowNotifications(false); 
+      showToast("Friend request accepted!");
     } catch (err) {
       console.error("Failed to accept request", err);
     }
   };
 
-  // 7. Open a chat and load history
   const openChat = async (friendEmail) => {
     setActiveChat(friendEmail);
+    setMessages([]);
     setUnreadCounts(prev => ({ ...prev, [friendEmail]: 0 }));
+    setIsChatLoading(true);
     
     try {
-      const historyRes = await axios.get(`${backendUrl}/api/messages/history/${friendEmail}`);
+      const historyRes = await axios.get(`${BACKEND_URL}/api/messages/history/${friendEmail}`);
       setMessages(historyRes.data);
     } catch (err) {
-      console.error("Failed to load history", err);
+      showToast("Failed to load chat history.", "error");
+    } finally {
+      setIsChatLoading(false);
     }
   };
 
-  // 8. Send a Message
   const handleSendMessage = (e) => {
     if (e) e.preventDefault();
     if (newMessage.trim() === '' || !stompClientRef.current) return;
     
     const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const uniqueId = Date.now().toString(); 
     
     const chatMessage = {
+      id: uniqueId,
       senderEmail: currentUser.email,
       recipientEmail: activeChat,
       content: newMessage.trim(),
@@ -199,11 +219,8 @@ export default function NeosisChat() {
     sendTypingStatus(false);
   };
 
-  // 9. Handle Typing Indicators
   const sendTypingStatus = (isTyping) => {
-    // URGENT FIX 3: Null guard utilizing refs to prevent crashing during auth race conditions
     if (!stompClientRef.current || !activeChatRef.current || !currentUserRef.current) return;
-    
     stompClientRef.current.publish({
       destination: '/app/chat.typing',
       body: JSON.stringify({ 
@@ -221,106 +238,81 @@ export default function NeosisChat() {
     typingTimeoutRef.current = setTimeout(() => sendTypingStatus(false), 1500);
   };
 
-  if(!currentUser) {
+  if (!currentUser) {
     return (
-      <div className="flex h-screen bg-slate-100 dark:bg-gray-950 p-4 relative transition-colors duration-300">
-        <div className="w-full max-w-6xl mx-auto bg-white dark:bg-gray-900 rounded-3xl shadow-2xl overflow-hidden border border-gray-100 dark:border-gray-800 flex h-full animate-pulse transition-colors duration-300">
-          <div className="w-full md:w-1/3 bg-slate-50 dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
-            <div className="h-[76px] bg-blue-200/50 dark:bg-blue-900/30 w-full"></div>
-            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-              <div className="h-10 bg-gray-200 dark:bg-gray-700 rounded-full w-full"></div>
-            </div>
-            <div className="flex-1 p-2 space-y-2 mt-2">
-              {[1, 2, 3, 4, 5].map(i => (
-                <div key={i} className="flex items-center gap-3 p-3">
-                  <div className="w-10 h-10 bg-gray-200 dark:bg-gray-700 rounded-full flex-shrink-0"></div>
-                  <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="hidden md:flex w-2/3 flex-col bg-white dark:bg-gray-900">
-            <div className="h-[76px] border-b border-gray-100 dark:border-gray-800 flex items-center px-6 gap-4">
-              <div className="w-10 h-10 bg-gray-200 dark:bg-gray-800 rounded-full"></div>
-              <div className="space-y-2.5">
-                <div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-32"></div>
-                <div className="h-2 bg-gray-200 dark:bg-gray-800 rounded w-20"></div>
-              </div>
-            </div>
-            <div className="flex-1 p-6 space-y-6">
-              <div className="flex justify-end"><div className="h-12 bg-gray-200 dark:bg-gray-800 rounded-2xl rounded-tr-sm w-1/3"></div></div>
-              <div className="flex justify-start"><div className="h-12 bg-gray-200 dark:bg-gray-800 rounded-2xl rounded-tl-sm w-1/4"></div></div>
-              <div className="flex justify-end"><div className="h-16 bg-gray-200 dark:bg-gray-800 rounded-2xl rounded-tr-sm w-1/2"></div></div>
-            </div>
-            <div className="p-4 border-t border-gray-100 dark:border-gray-800 flex gap-3">
-              <div className="flex-1 h-[52px] bg-gray-100 dark:bg-gray-800 rounded-full"></div>
-              <div className="w-[52px] h-[52px] bg-gray-200 dark:bg-gray-800 rounded-full"></div>
-            </div>
-          </div>
-        </div>
+      <div className="flex h-screen bg-[#0f172a] items-center justify-center">
+        <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
+          <Loader2 size={48} className="text-indigo-500" />
+        </motion.div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen bg-slate-100 dark:bg-gray-950 p-4 relative transition-colors duration-300">
-      <div className="w-full max-w-6xl mx-auto bg-white dark:bg-gray-900 rounded-3xl shadow-2xl overflow-hidden border border-gray-100 dark:border-gray-800 flex h-full transition-colors duration-300">
+    <div className="flex h-screen bg-slate-50 dark:bg-slate-950 p-2 md:p-4 transition-colors duration-300 font-sans">
+      
+      <AnimatePresence>
+        {toast && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} 
+            className={`absolute top-8 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-full text-sm font-semibold shadow-2xl flex items-center gap-2 ${toast.type === 'error' ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-white'}`}
+          >
+            {toast.type === 'success' && <Check size={16} />}
+            {toast.message}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="w-full max-w-7xl mx-auto rounded-3xl shadow-2xl overflow-hidden flex h-full border border-slate-200 dark:border-slate-800 relative z-10 bg-white dark:bg-slate-900">
         
-        {/* ================= LEFT SIDEBAR ================= */}
-        <div className={`${activeChat ? 'hidden md:flex' : 'flex'} w-full md:w-1/3 bg-slate-50 dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex-col transition-colors duration-300`}>
+        {/* ================= LEFT SIDEBAR (Deep Navy #0d1b2a) ================= */}
+        <div className={`${activeChat ? 'hidden md:flex' : 'flex'} w-full md:w-[380px] bg-[#0d1b2a] flex-col flex-shrink-0 z-20 shadow-xl`}>
           
-          <div className="p-5 bg-gradient-to-r from-blue-700 to-blue-800 text-white flex justify-between items-center z-20">
-            <div>
-              <h2 className="text-xl font-bold tracking-wide">NEOSIS</h2>
-              <p className="text-xs text-blue-200 mt-1">{currentUser.name || formatName(currentUser.email)}</p>
+          {/* Header */}
+          <div className="p-6 flex justify-between items-center bg-[#0a1520]">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                <ShieldCheck size={20} className="text-white" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-white tracking-wide">NEOSIS</h2>
+                <p className="text-[11px] text-indigo-300 font-medium">{currentUser.name || formatName(currentUser.email)}</p>
+              </div>
             </div>
             
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => setIsDarkMode(!isDarkMode)} 
-                className="p-2 bg-white/10 rounded-full hover:bg-white/20 transition"
-                title="Toggle Dark Mode"
-              >
-                {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+            <div className="flex items-center gap-1">
+              <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-full transition">
+                {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
               </button>
 
               <div className="relative">
-                <button 
-                  onClick={() => setShowNotifications(!showNotifications)} 
-                  className="p-2 bg-white/10 rounded-full hover:bg-white/20 transition relative"
-                >
-                  <Bell size={20} />
-                  {pendingRequests.length > 0 && (
-                    <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-blue-800 animate-pulse"></span>
-                  )}
+                <button onClick={() => setShowNotifications(!showNotifications)} className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-full transition">
+                  <Bell size={18} />
+                  {pendingRequests.length > 0 && <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-rose-500 rounded-full border-2 border-[#0a1520]"></span>}
                 </button>
                 
                 <AnimatePresence>
                   {showNotifications && (
-                    <motion.div 
-                      initial={{ opacity: 0, y: 10 }} 
-                      animate={{ opacity: 1, y: 0 }} 
-                      exit={{ opacity: 0, y: 10 }} 
-                      className="absolute top-12 right-0 w-72 bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-100 dark:border-gray-700 z-50 text-gray-800 dark:text-white overflow-hidden"
+                    <motion.div initial={{ opacity: 0, y: 10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.95 }} 
+                      className="absolute top-12 right-0 w-80 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-100 dark:border-slate-700 z-50 overflow-hidden"
                     >
-                      <div className="p-3 bg-gray-50 dark:bg-gray-700 border-b dark:border-gray-600 text-sm font-bold flex justify-between items-center">
+                      <div className="p-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-100 dark:border-slate-700 text-sm font-bold flex justify-between items-center text-slate-800 dark:text-white">
                         <span>Friend Requests</span>
-                        <span className="bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 text-xs px-2 py-1 rounded-full">{pendingRequests.length}</span>
+                        <span className="bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-400 text-xs px-2.5 py-1 rounded-full">{pendingRequests.length}</span>
                       </div>
                       {pendingRequests.length === 0 ? (
-                        <div className="p-6 text-sm text-gray-500 dark:text-gray-400 text-center">No pending requests</div>
+                        <div className="p-8 text-sm text-slate-400 text-center">No pending requests</div>
                       ) : (
-                        pendingRequests.map(req => (
-                          <div key={req.id} className="p-3 border-b dark:border-gray-700 flex justify-between items-center hover:bg-gray-50 dark:hover:bg-gray-700 transition">
-                            <span className="text-sm truncate w-2/3" title={req.senderEmail}>{formatName(req.senderEmail)}</span>
-                            <button 
-                              onClick={() => handleAcceptRequest(req.id)} 
-                              className="bg-green-500 text-white p-1.5 rounded-full hover:bg-green-600 transition shadow-sm"
-                            >
-                              <Check size={16}/>
-                            </button>
-                          </div>
-                        ))
+                        <div className="max-h-64 overflow-y-auto">
+                          {pendingRequests.map(req => (
+                            <div key={req.id} className="p-4 border-b border-slate-50 dark:border-slate-700/50 flex justify-between items-center hover:bg-slate-50 dark:hover:bg-slate-700/50 transition">
+                              <span className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate w-2/3" title={req.senderEmail}>{formatName(req.senderEmail)}</span>
+                              <button onClick={() => handleAcceptRequest(req.id)} className="bg-emerald-500 hover:bg-emerald-600 text-white p-2 rounded-full shadow-md shadow-emerald-500/20 transition">
+                                <Check size={16}/>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
                       )}
                     </motion.div>
                   )}
@@ -329,136 +321,214 @@ export default function NeosisChat() {
             </div>
           </div>
 
-          <form onSubmit={handleSendRequest} className="p-4 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex gap-2 transition-colors duration-300">
-            <input 
-              type="email" 
-              value={addEmailInput} 
-              onChange={(e) => setAddEmailInput(e.target.value)} 
-              placeholder="Add contact by email..." 
-              className="flex-1 bg-gray-100 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400 rounded-full px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 transition" 
-              required 
-            />
-            <button type="submit" className="bg-blue-600 text-white p-2 rounded-full hover:bg-blue-700 transition">
-              <UserPlus size={18}/>
-            </button>
-          </form>
+          {/* Search / Add Friend Bar */}
+          <div className="px-5 py-4">
+            <form onSubmit={handleSendRequest} className="relative flex items-center">
+              <div className="absolute left-4 text-slate-400"><Search size={16} /></div>
+              <input 
+                type="email" value={addEmailInput} onChange={(e) => setAddEmailInput(e.target.value)} 
+                placeholder="Add contact by email..." 
+                className="w-full bg-[#162536] text-white placeholder-slate-400 rounded-xl pl-11 pr-12 py-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500 transition-shadow border border-slate-700/50" required 
+              />
+              <button type="submit" className="absolute right-2 p-1.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg transition-colors">
+                <UserPlus size={16}/>
+              </button>
+            </form>
+          </div>
 
-          <div className="flex-1 overflow-y-auto">
-            {friends.map(friend => (
-              <div 
-                key={friend} 
-                onClick={() => openChat(friend)} 
-                className={`p-4 border-b border-gray-100 dark:border-gray-700 cursor-pointer transition-colors flex items-center gap-3 ${activeChat === friend ? 'bg-blue-50 dark:bg-blue-900/30 border-l-4 border-l-blue-600' : 'hover:bg-gray-50 dark:hover:bg-gray-700'}`}
-              >
-                <div className="w-10 h-10 bg-gradient-to-br from-blue-100 to-blue-200 dark:from-blue-900 dark:to-blue-800 rounded-full flex items-center justify-center text-blue-700 dark:text-blue-300 font-bold text-lg">
-                  {formatName(friend).charAt(0).toUpperCase()}
-                </div>
-                <div className="font-semibold text-sm text-gray-800 dark:text-gray-100 truncate flex-1">{formatName(friend)}</div>
-                
-                {unreadCounts[friend] > 0 && (
-                  <div className="bg-green-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm animate-bounce-short">
-                    {unreadCounts[friend]}
+          {/* Contacts List */}
+          <div className="flex-1 overflow-y-auto custom-scrollbar px-3 space-y-1 pb-4">
+            {friends.map(friend => {
+              const fName = formatName(friend);
+              const isActive = activeChat === friend;
+              return (
+                <div 
+                  key={friend} onClick={() => openChat(friend)} 
+                  className={`p-3 rounded-2xl cursor-pointer transition-all flex items-center gap-4 relative group ${isActive ? 'bg-[#162536]' : 'hover:bg-[#162536]/60'}`}
+                >
+                  {/* Left Active Indicator */}
+                  {isActive && <motion.div layoutId="activeIndicator" className="absolute left-0 top-1/4 bottom-1/4 w-1 bg-indigo-500 rounded-r-full" />}
+                  
+                  {/* Gradient Avatar */}
+                  <div className="relative">
+                    <div className={`w-12 h-12 bg-gradient-to-br ${getAvatarGradient(fName)} rounded-full flex items-center justify-center text-white font-bold text-lg shadow-inner`}>
+                      {fName.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald-500 rounded-full border-2 border-[#0d1b2a]"></div>
                   </div>
-                )}
-              </div>
-            ))}
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex justify-between items-baseline mb-0.5">
+                      <div className="font-semibold text-slate-100 truncate text-[15px]">{fName}</div>
+                      <div className="text-[10px] text-slate-400">Just now</div>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <div className="text-xs text-slate-400 truncate">Tap to view conversation...</div>
+                      {unreadCounts[friend] > 0 && (
+                        <div className="bg-indigo-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-md shadow-indigo-500/30">
+                          {unreadCounts[friend]}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+            
             {friends.length === 0 && (
-              <div className="p-8 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 text-center h-full">
-                <UserPlus size={32} className="mb-2 opacity-50" />
-                <p className="text-sm">No chats yet.</p>
-                <p className="text-xs mt-1">Send a request to start talking!</p>
+              <div className="mt-10 flex flex-col items-center justify-center text-slate-500 text-center px-6">
+                <div className="w-16 h-16 bg-[#162536] rounded-full flex items-center justify-center mb-4">
+                  <UserPlus size={24} className="text-slate-400" />
+                </div>
+                <h3 className="text-slate-200 font-semibold mb-1">No chats yet</h3>
+                <p className="text-xs leading-relaxed">Search for a friend's email above to start a secure conversation.</p>
               </div>
             )}
           </div>
         </div>
 
-        {/* ================= RIGHT SIDEBAR (Main Chat) ================= */}
-        <div className={`${!activeChat ? 'hidden md:flex' : 'flex'} w-full md:w-2/3 flex-col bg-white dark:bg-gray-900 transition-colors duration-300`}>
+        {/* ================= RIGHT SIDEBAR (Main Chat Area) ================= */}
+        <div className={`${!activeChat ? 'hidden md:flex' : 'flex'} flex-1 flex-col bg-white dark:bg-slate-950 relative`}>
+          
+          {/* Subtle Dot Grid Background */}
+          <div className="absolute inset-0 opacity-[0.03] dark:opacity-[0.02] pointer-events-none" 
+               style={{ backgroundImage: 'radial-gradient(currentColor 1px, transparent 1px)', backgroundSize: '24px 24px' }}></div>
+
           {!activeChat ? (
-            <div className="flex-1 flex flex-col items-center justify-center bg-slate-50 dark:bg-gray-900 text-gray-400 dark:text-gray-500">
-              <MessageSquare size={64} className="mb-4 text-gray-300 dark:text-gray-600" />
-              <h2 className="text-xl font-medium text-gray-600 dark:text-gray-300">Neosis for Web</h2>
-              <p className="text-sm mt-2 max-w-xs text-center leading-relaxed">Select a contact from the sidebar to start a secure, end-to-end encrypted conversation.</p>
+            <div className="flex-1 flex flex-col items-center justify-center relative z-10 text-slate-400 dark:text-slate-500">
+              <div className="w-24 h-24 bg-indigo-50 dark:bg-indigo-900/10 rounded-full flex items-center justify-center mb-6 shadow-inner">
+                <MessageSquare size={40} className="text-indigo-500 dark:text-indigo-400" />
+              </div>
+              <h2 className="text-2xl font-bold text-slate-700 dark:text-slate-200 mb-2">Neosis Web</h2>
+              <p className="text-sm max-w-sm text-center leading-relaxed">Select a contact from the sidebar to start a secure, end-to-end encrypted conversation.</p>
+              <div className="mt-8 flex items-center gap-2 text-xs font-medium text-slate-400 bg-slate-100 dark:bg-slate-900 px-4 py-2 rounded-full">
+                <ShieldCheck size={14} className="text-emerald-500"/>
+                End-to-end Encrypted
+              </div>
             </div>
           ) : (
-            <>
-              <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 flex items-center gap-4 shadow-sm z-10 transition-colors duration-300">
-                <button 
-                  onClick={() => setActiveChat(null)}
-                  className="md:hidden text-gray-400 hover:text-blue-600 p-2 rounded-full hover:bg-blue-50 dark:hover:bg-gray-800 transition"
-                >
-                  <ArrowLeft size={20} />
-                </button>
-                <div className="w-10 h-10 bg-gradient-to-br from-blue-100 to-blue-200 dark:from-blue-900 dark:to-blue-800 rounded-full flex items-center justify-center text-blue-700 dark:text-blue-300 font-bold text-lg shadow-inner">
-                  {formatName(activeChat).charAt(0).toUpperCase()}
-                </div>
-                <div>
-                  <div className="font-bold text-gray-800 dark:text-gray-100">{formatName(activeChat)}</div>
-                  <div className="text-[11px] font-medium flex items-center gap-1 mt-0.5">
-                    {isRemoteTyping ? (
-                      <span className="text-blue-500 italic animate-pulse">typing...</span>
-                    ) : (
-                      <>
-                        <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                        <span className="text-green-500">Securely Connected</span>
-                      </>
-                    )}
+            <div className="flex flex-col h-full relative z-10">
+              {/* Chat Header */}
+              <div className="px-6 py-4 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 flex items-center justify-between z-20">
+                <div className="flex items-center gap-4">
+                  <button onClick={() => setActiveChat(null)} className="md:hidden text-slate-400 hover:text-indigo-600 transition">
+                    <ArrowLeft size={24} />
+                  </button>
+                  <div className="relative">
+                    <div className={`w-11 h-11 bg-gradient-to-br ${getAvatarGradient(formatName(activeChat))} rounded-full flex items-center justify-center text-white font-bold text-lg shadow-md`}>
+                      {formatName(activeChat).charAt(0).toUpperCase()}
+                    </div>
+                    <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white dark:border-slate-900"></div>
                   </div>
+                  <div>
+                    <div className="font-bold text-slate-800 dark:text-slate-100 text-[16px]">{formatName(activeChat)}</div>
+                    <div className="text-[12px] font-medium text-emerald-500 flex items-center gap-1.5 mt-0.5">
+                      {isRemoteTyping ? <span className="italic text-indigo-500 animate-pulse">typing...</span> : "Online"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Header Action Icons */}
+                <div className="flex items-center gap-4 text-slate-400 dark:text-slate-500">
+                  <button className="hover:text-indigo-500 transition"><Phone size={20}/></button>
+                  <button className="hover:text-indigo-500 transition"><Video size={22}/></button>
+                  <div className="w-px h-6 bg-slate-200 dark:bg-slate-800 mx-1"></div>
+                  <button className="hover:text-indigo-500 transition"><Search size={20}/></button>
+                  <button className="hover:text-indigo-500 transition"><MoreVertical size={20}/></button>
                 </div>
               </div>
               
-              <div className="flex-1 p-6 overflow-y-auto bg-slate-50 dark:bg-gray-950 space-y-4" style={{ backgroundImage: 'radial-gradient(var(--tw-gradient-stops))' }}>
-                <AnimatePresence>
-                  {messages.map((msg, index) => {
-                    const isMe = msg.senderEmail === currentUser.email;
-                    return (
-                      <motion.div key={index} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`flex flex-col max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
-                          <div className={`px-5 py-3 text-[15px] shadow-sm leading-relaxed ${isMe ? 'bg-blue-600 text-white rounded-2xl rounded-tr-sm' : 'bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 text-gray-800 dark:text-gray-100 rounded-2xl rounded-tl-sm'}`}>
-                            {decodeHTMLEntities(msg.content)}
+              {/* Messages Area */}
+              <div className="flex-1 p-6 overflow-y-auto custom-scrollbar space-y-5">
+                {/* Date Separator Pill */}
+                <div className="flex justify-center mb-6">
+                  <span className="bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-[11px] font-bold px-3 py-1 rounded-full uppercase tracking-wide">Today</span>
+                </div>
+
+                {isChatLoading ? (
+                  <div className="flex justify-center items-center h-full"><Loader2 className="animate-spin text-indigo-500" size={32} /></div>
+                ) : (
+                  <AnimatePresence>
+                    {messages.map((msg, index) => {
+                      const isMe = msg.senderEmail === currentUser.email;
+                      return (
+                        <motion.div key={msg.id || `${index}-${msg.timestamp}`} initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                          <div className={`flex flex-col max-w-[75%] md:max-w-[65%] ${isMe ? 'items-end' : 'items-start'}`}>
+                            <div className={`px-5 py-3 text-[15px] leading-relaxed break-words shadow-sm
+                              ${isMe 
+                                ? 'bg-gradient-to-r from-indigo-500 to-blue-600 text-white rounded-2xl rounded-tr-sm shadow-indigo-500/25' 
+                                : 'bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700/50 text-slate-800 dark:text-slate-100 rounded-2xl rounded-tl-sm shadow-slate-200/20 dark:shadow-none'}`}
+                            >
+                              {decodeHTMLEntities(msg.content)}
+                            </div>
+                            <span className="text-[10px] text-slate-400 dark:text-slate-500 mt-1.5 font-medium px-1 flex items-center gap-1">
+                              {msg.timestamp || 'Just now'} 
+                              {isMe && <Check size={12} className="text-indigo-400" />}
+                            </span>
                           </div>
-                          <span className="text-[10px] text-gray-400 dark:text-gray-500 mt-1 font-medium px-1">{msg.timestamp || 'Just now'}</span>
+                        </motion.div>
+                      );
+                    })}
+                    
+                    {/* Typing Indicator Bubble */}
+                    {isRemoteTyping && (
+                      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9 }} className="flex justify-start">
+                        <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl rounded-tl-sm px-4 py-3.5 shadow-sm flex items-center gap-1.5 w-[72px]">
+                          <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0 }} className="w-2 h-2 bg-slate-300 dark:bg-slate-500 rounded-full" />
+                          <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0.2 }} className="w-2 h-2 bg-slate-300 dark:bg-slate-500 rounded-full" />
+                          <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0.4 }} className="w-2 h-2 bg-slate-300 dark:bg-slate-500 rounded-full" />
                         </div>
                       </motion.div>
-                    );
-                  })}
-                  
-                  {isRemoteTyping && (
-                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9 }} className="flex justify-start">
-                        <div className="bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm flex items-center gap-1 w-16">
-                          <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0 }} className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full" />
-                          <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0.2 }} className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full" />
-                          <motion.div animate={{ y: [0, -5, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: 0.4 }} className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full" />
-                        </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-                <div ref={messagesEndRef} className="h-2" />
+                    )}
+                  </AnimatePresence>
+                )}
+                <div ref={messagesEndRef} className="h-4" />
               </div>
 
-              <form onSubmit={handleSendMessage} className="p-4 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 flex gap-3 transition-colors duration-300">
-                <input 
-                  type="text" 
-                  value={newMessage} 
-                  onChange={handleInputChange} 
-                  onKeyDown={(e) => { 
-                    if (e.key === 'Enter') {
-                      e.preventDefault(); 
-                      handleSendMessage(e); 
-                    }
-                  }}
-                  placeholder="Type a message..." 
-                  className="flex-1 px-5 py-3.5 bg-slate-100 dark:bg-gray-800 dark:text-white dark:placeholder-gray-400 border-transparent rounded-full focus:bg-white dark:focus:bg-gray-700 focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-all shadow-inner" 
-                />
-                <button 
-                  type="submit" 
-                  disabled={!newMessage.trim()} 
-                  className="bg-blue-600 hover:bg-blue-700 text-white p-3.5 rounded-full shadow-lg disabled:opacity-50 disabled:shadow-none transition"
-                >
-                  <Send size={18} className="ml-1" />
-                </button>
-              </form>
-            </>
+              {/* Input Area */}
+              <div className="p-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 z-20">
+                <form onSubmit={handleSendMessage} className="flex items-end gap-3 max-w-4xl mx-auto">
+                  
+                  <div className="flex-1 bg-slate-100 dark:bg-slate-800 rounded-3xl flex items-end p-1 shadow-inner border border-transparent focus-within:border-indigo-500/30 transition-all">
+                    <button type="button" className="p-3 text-slate-400 hover:text-indigo-500 transition-colors">
+                      <Smile size={22} />
+                    </button>
+                    
+                    <textarea 
+                      value={newMessage} 
+                      onChange={handleInputChange} 
+                      onKeyDown={(e) => { 
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault(); 
+                          handleSendMessage(e); 
+                        }
+                      }}
+                      placeholder="Type your message..." 
+                      className="flex-1 bg-transparent text-slate-700 dark:text-slate-200 placeholder-slate-400 outline-none text-[15px] py-3 max-h-32 min-h-[44px] resize-none custom-scrollbar" 
+                      rows="1"
+                    />
+                    
+                    <button type="button" className="p-3 text-slate-400 hover:text-indigo-500 transition-colors">
+                      <Paperclip size={20} />
+                    </button>
+                  </div>
+
+                  {newMessage.trim() ? (
+                    <motion.button 
+                      initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} 
+                      type="submit" 
+                      className="bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-600 hover:to-blue-700 text-white p-3.5 rounded-full shadow-lg shadow-indigo-500/30 transition-transform hover:scale-105 flex-shrink-0"
+                    >
+                      <Send size={20} className="ml-0.5" />
+                    </motion.button>
+                  ) : (
+                    <button type="button" className="bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-indigo-500 p-3.5 rounded-full transition-colors flex-shrink-0">
+                      <Mic size={22} />
+                    </button>
+                  )}
+                </form>
+              </div>
+            </div>
           )}
         </div>
       </div>
