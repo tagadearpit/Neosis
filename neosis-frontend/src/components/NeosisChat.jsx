@@ -7,19 +7,22 @@ import { Client } from '@stomp/stompjs';
 
 axios.defaults.withCredentials = true;
 
-// Helper function to decode HTML entities (like &#39; to ')
+// URGENT FIX 2: XSS Risk Removed. 
+// No more innerHTML. This safely replaces common encoded entities purely as strings.
 const decodeHTMLEntities = (text) => {
   if (!text) return text;
-  const textArea = document.createElement('textarea');
-  textArea.innerHTML = text;
-  return textArea.value;
+  return text
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
 };
 
-// NEW: Helper function to convert emails into clean Display Names
+// Helper function to convert emails into clean Display Names
 const formatName = (email) => {
   if (!email) return '';
   const namePart = email.split('@')[0];
-  // Replaces dots, dashes, and underscores with spaces, then capitalizes
   return namePart
     .split(/[\.\-_]/)
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
@@ -32,34 +35,32 @@ export default function NeosisChat() {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   
-  // States for WhatsApp Architecture
   const [friends, setFriends] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [addEmailInput, setAddEmailInput] = useState('');
-
-  // State for Unread Messages
   const [unreadCounts, setUnreadCounts] = useState({});
-
-  // Dark Mode State
   const [isDarkMode, setIsDarkMode] = useState(false);
-
   const [isRemoteTyping, setIsRemoteTyping] = useState(false);
+  
   const typingTimeoutRef = useRef(null);
   const stompClientRef = useRef(null);
   const messagesEndRef = useRef(null); 
   
-  // A Ref to keep track of the active chat inside the WebSocket connection
+  // Refs to keep track of state inside the WebSocket connection and timeouts
   const activeChatRef = useRef(activeChat);
+  const currentUserRef = useRef(currentUser);
 
   const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8080';
 
-  // Keep the activeChatRef updated whenever you click a new friend
   useEffect(() => {
     activeChatRef.current = activeChat;
   }, [activeChat]);
 
-  // Toggle dark mode class on the HTML body
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+
   useEffect(() => {
     if (isDarkMode) {
       document.documentElement.classList.add('dark');
@@ -80,8 +81,19 @@ export default function NeosisChat() {
         console.error("Auth error", err);
       }
     };
+    
     initializeApp();
-  }, []);
+
+    // URGENT FIX 1: WebSocket and Timer Cleanup on Unmount
+    return () => {
+      if (stompClientRef.current) {
+        stompClientRef.current.deactivate();
+      }
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+    };
+  }, []); // Empty dependency array, safe because backendUrl is static
 
   // 2. Auto-scroll to bottom of chat
   useEffect(() => {
@@ -190,12 +202,17 @@ export default function NeosisChat() {
 
   // 9. Handle Typing Indicators
   const sendTypingStatus = (isTyping) => {
-    if (stompClientRef.current && activeChat) {
-      stompClientRef.current.publish({
-        destination: '/app/chat.typing',
-        body: JSON.stringify({ senderEmail: currentUser.email, recipientEmail: activeChat, isTyping: isTyping.toString() })
-      });
-    }
+    // URGENT FIX 3: Null guard utilizing refs to prevent crashing during auth race conditions
+    if (!stompClientRef.current || !activeChatRef.current || !currentUserRef.current) return;
+    
+    stompClientRef.current.publish({
+      destination: '/app/chat.typing',
+      body: JSON.stringify({ 
+        senderEmail: currentUserRef.current.email, 
+        recipientEmail: activeChatRef.current, 
+        isTyping: isTyping.toString() 
+      })
+    });
   };
 
   const handleInputChange = (e) => {
@@ -205,12 +222,10 @@ export default function NeosisChat() {
     typingTimeoutRef.current = setTimeout(() => sendTypingStatus(false), 1500);
   };
 
-  // NEW: Beautiful Skeleton Loader (Replaces the "Loading Neosis..." text)
   if(!currentUser) {
     return (
       <div className="flex h-screen bg-slate-100 dark:bg-gray-950 p-4 relative transition-colors duration-300">
         <div className="w-full max-w-6xl mx-auto bg-white dark:bg-gray-900 rounded-3xl shadow-2xl overflow-hidden border border-gray-100 dark:border-gray-800 flex h-full animate-pulse transition-colors duration-300">
-          
           <div className="w-full md:w-1/3 bg-slate-50 dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
             <div className="h-[76px] bg-blue-200/50 dark:bg-blue-900/30 w-full"></div>
             <div className="p-4 border-b border-gray-200 dark:border-gray-700">
@@ -225,7 +240,6 @@ export default function NeosisChat() {
               ))}
             </div>
           </div>
-
           <div className="hidden md:flex w-2/3 flex-col bg-white dark:bg-gray-900">
             <div className="h-[76px] border-b border-gray-100 dark:border-gray-800 flex items-center px-6 gap-4">
               <div className="w-10 h-10 bg-gray-200 dark:bg-gray-800 rounded-full"></div>
@@ -259,7 +273,6 @@ export default function NeosisChat() {
           <div className="p-5 bg-gradient-to-r from-blue-700 to-blue-800 text-white flex justify-between items-center z-20">
             <div>
               <h2 className="text-xl font-bold tracking-wide">NEOSIS</h2>
-              {/* UI UPDATE: Displays Formatted Name instead of full email */}
               <p className="text-xs text-blue-200 mt-1">{currentUser.name || formatName(currentUser.email)}</p>
             </div>
             
@@ -300,7 +313,6 @@ export default function NeosisChat() {
                       ) : (
                         pendingRequests.map(req => (
                           <div key={req.id} className="p-3 border-b dark:border-gray-700 flex justify-between items-center hover:bg-gray-50 dark:hover:bg-gray-700 transition">
-                            {/* UI UPDATE: Formats incoming friend request names */}
                             <span className="text-sm truncate w-2/3" title={req.senderEmail}>{formatName(req.senderEmail)}</span>
                             <button 
                               onClick={() => handleAcceptRequest(req.id)} 
@@ -340,10 +352,8 @@ export default function NeosisChat() {
                 className={`p-4 border-b border-gray-100 dark:border-gray-700 cursor-pointer transition-colors flex items-center gap-3 ${activeChat === friend ? 'bg-blue-50 dark:bg-blue-900/30 border-l-4 border-l-blue-600' : 'hover:bg-gray-50 dark:hover:bg-gray-700'}`}
               >
                 <div className="w-10 h-10 bg-gradient-to-br from-blue-100 to-blue-200 dark:from-blue-900 dark:to-blue-800 rounded-full flex items-center justify-center text-blue-700 dark:text-blue-300 font-bold text-lg">
-                  {/* UI UPDATE: Extract first letter of their formatted name */}
                   {formatName(friend).charAt(0).toUpperCase()}
                 </div>
-                {/* UI UPDATE: Show formatted name in sidebar */}
                 <div className="font-semibold text-sm text-gray-800 dark:text-gray-100 truncate flex-1">{formatName(friend)}</div>
                 
                 {unreadCounts[friend] > 0 && (
@@ -384,7 +394,6 @@ export default function NeosisChat() {
                   {formatName(activeChat).charAt(0).toUpperCase()}
                 </div>
                 <div>
-                  {/* UI UPDATE: Show formatted name in Chat Header */}
                   <div className="font-bold text-gray-800 dark:text-gray-100">{formatName(activeChat)}</div>
                   <div className="text-[11px] font-medium flex items-center gap-1 mt-0.5">
                     {isRemoteTyping ? (
