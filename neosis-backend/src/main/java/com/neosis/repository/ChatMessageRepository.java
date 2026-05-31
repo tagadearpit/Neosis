@@ -11,7 +11,7 @@ import java.util.List;
 @Repository
 public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> {
     
-    // Finds all messages between user1 and user2, sorted by when they were created
-    @Query("SELECT m FROM ChatMessage m WHERE (m.senderEmail = :user1 AND m.recipientEmail = :user2) OR (m.senderEmail = :user2 AND m.recipientEmail = :user1) ORDER BY m.id ASC")
+    // CRITICAL FIX: Now sorts by the secure, server-generated 'createdAt' timestamp
+    @Query("SELECT m FROM ChatMessage m WHERE (m.senderEmail = :user1 AND m.recipientEmail = :user2) OR (m.senderEmail = :user2 AND m.recipientEmail = :user1) ORDER BY m.createdAt ASC")
     List<ChatMessage> findChatHistory(@Param("user1") String user1, @Param("user2") String user2);
 }

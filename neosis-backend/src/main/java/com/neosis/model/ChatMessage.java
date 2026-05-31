@@ -1,23 +1,29 @@
 package com.neosis.model;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
+import jakarta.persistence.*;
+import org.hibernate.annotations.CreationTimestamp;
+import java.time.LocalDateTime;
 
 @Entity
 public class ChatMessage {
     
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id; // NEW: Primary Key for the database
+    private Long id; 
     
     private String senderEmail;
     private String recipientEmail;
-    private String content;
-    private String timestamp; // NEW: To store when the message was sent
 
-    // Default constructor required by JPA
+    @Column(columnDefinition = "TEXT")
+    private String content;
+    
+    private String timestamp; // Frontend display string (e.g. "10:25 AM")
+
+    // CRITICAL FIX: Server-side timestamp for accurate database sorting
+    @CreationTimestamp
+    @Column(updatable = false)
+    private LocalDateTime createdAt;
+
     public ChatMessage() {}
 
     public ChatMessage(String senderEmail, String recipientEmail, String content, String timestamp) {
@@ -41,4 +47,7 @@ public class ChatMessage {
 
     public String getTimestamp() { return timestamp; }
     public void setTimestamp(String timestamp) { this.timestamp = timestamp; }
+
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }

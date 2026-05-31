@@ -19,7 +19,7 @@ public class ChatController {
     private SimpMessagingTemplate messagingTemplate;
 
     @Autowired
-    private ChatMessageRepository chatMessageRepository; // NEW: Repository to save messages
+    private ChatMessageRepository chatMessageRepository;
 
     @MessageMapping("/chat.send")
     public void sendMessage(@Payload ChatMessage chatMessage, OAuth2AuthenticationToken token) {
@@ -35,28 +35,24 @@ public class ChatController {
             return; 
         }
 
-        // --- LAYER 2: XSS SANITIZATION ---
-        String safeContent = chatMessage.getContent();
+        // --- LAYER 2: XSS SANITIZATION (CRITICAL FIX) ---
+        // HtmlUtils.htmlEscape() correctly sanitizes malicious scripts now
+        String safeContent = HtmlUtils.htmlEscape(chatMessage.getContent());
         chatMessage.setContent(safeContent);
         // -----------------------------------------------------------
 
         // --- LAYER 3: DATABASE PERSISTENCE ---
-        // Save the clean, verified message to PostgreSQL before sending
         chatMessageRepository.save(chatMessage);
         // -----------------------------------------------------------
 
-        // Route the message to the recipient
         messagingTemplate.convertAndSend("/queue/messages/" + chatMessage.getRecipientEmail(), chatMessage);
     }
 
-    // --- TYPING INDICATOR ENDPOINT ---
     @MessageMapping("/chat.typing")
     public void sendTypingIndicator(@Payload Map<String, String> payload, OAuth2AuthenticationToken token) {
-        if (token == null) return; // Basic security check
+        if (token == null) return; 
         
         String recipientEmail = payload.get("recipientEmail");
-        
-        // Forward the typing status directly to the recipient's specific typing queue
         messagingTemplate.convertAndSend("/queue/typing/" + recipientEmail, payload);
     }
 }
