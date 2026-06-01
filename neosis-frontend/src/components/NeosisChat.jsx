@@ -4,7 +4,7 @@ import axios from 'axios';
 import { 
   MessageSquare, UserPlus, Bell, Send, Check, ArrowLeft, Moon, Sun, 
   Loader2, Phone, Video, Search, MoreVertical, Paperclip, Smile, Mic, ShieldCheck,
-  X, User, Trash2, Ban
+  X, User, Trash2, Ban, PhoneOff, PhoneCall
 } from 'lucide-react';
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
@@ -13,7 +13,7 @@ axios.defaults.withCredentials = true;
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8080';
 
-// Safe String Replacer (100% immune to XSS as it does not use DOM parsing)
+// Safe String Replacer (100% immune to XSS)
 const unescapeSafeString = (text) => {
   if (!text) return text;
   return text
@@ -24,41 +24,38 @@ const unescapeSafeString = (text) => {
     .replace(/&amp;/g, '&'); 
 };
 
-// Formats email into clean names
 const formatName = (email) => {
   if (!email) return '';
   const namePart = email.split('@')[0];
-  return namePart
-    .split(/[\.\-_]/)
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
+  return namePart.split(/[\.\-_]/).map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 };
 
 const getAvatarGradient = (name) => {
   if (!name) return 'from-gray-400 to-gray-500';
   const gradients = [
-    'from-indigo-500 to-blue-500',
-    'from-emerald-400 to-teal-500',
-    'from-pink-500 to-rose-500',
-    'from-amber-400 to-orange-500',
-    'from-violet-500 to-purple-500',
-    'from-cyan-400 to-blue-600'
+    'from-indigo-500 to-blue-500', 'from-emerald-400 to-teal-500', 
+    'from-pink-500 to-rose-500', 'from-amber-400 to-orange-500', 
+    'from-violet-500 to-purple-500', 'from-cyan-400 to-blue-600'
   ];
-  const charCode = name.charCodeAt(0) || 0;
-  return gradients[charCode % gradients.length];
+  return gradients[(name.charCodeAt(0) || 0) % gradients.length];
 };
 
-// Helper to highlight searched text
 const highlightText = (text, highlight) => {
   if (!highlight.trim()) return text;
   const parts = text.split(new RegExp(`(${highlight})`, 'gi'));
   return parts.map((part, i) => 
     part.toLowerCase() === highlight.toLowerCase() ? (
       <span key={i} className="bg-yellow-300 dark:bg-indigo-500/50 text-slate-900 dark:text-white rounded px-0.5">{part}</span>
-    ) : (
-      part
-    )
+    ) : part
   );
+};
+
+// WebRTC STUN Servers for NAT Traversal
+const rtcConfiguration = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' }
+  ]
 };
 
 export default function NeosisChat() {
@@ -82,7 +79,12 @@ export default function NeosisChat() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showMoreMenu, setShowMoreMenu] = useState(false);
 
-  // Refs for tracking and memory leak cleanup
+  // --- WEBRTC CALLING STATES ---
+  const [callState, setCallState] = useState('idle'); // idle, ringing, in-call
+  const [incomingCallData, setIncomingCallData] = useState(null);
+  const [isVideoCall, setIsVideoCall] = useState(false);
+
+  // Refs
   const typingTimeoutRef = useRef(null);
   const remoteTypingTimeoutRef = useRef(null);
   const toastTimeoutRef = useRef(null);
@@ -92,15 +94,18 @@ export default function NeosisChat() {
   const activeChatRef = useRef(activeChat);
   const currentUserRef = useRef(currentUser);
 
+  // --- WEBRTC REFS ---
+  const localVideoRef = useRef(null);
+  const remoteVideoRef = useRef(null);
+  const peerConnectionRef = useRef(null);
+  const localStreamRef = useRef(null);
+
   useEffect(() => { activeChatRef.current = activeChat; }, [activeChat]);
   useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
 
   useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    if (isDarkMode) document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
   }, [isDarkMode]);
 
   const fetchSidebarData = useCallback(async () => {
@@ -134,55 +139,171 @@ export default function NeosisChat() {
     
     initializeApp();
 
-    // Strict Memory Leak Cleanup
     return () => {
       if (stompClientRef.current) stompClientRef.current.deactivate();
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       if (remoteTypingTimeoutRef.current) clearTimeout(remoteTypingTimeoutRef.current);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      endCall(); // Ensure camera/mic turns off on unmount
     };
   }, [fetchSidebarData]);
 
-  // Removed isSearching from dependencies so searching doesn't auto-scroll you away
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isRemoteTyping]); 
 
+  // ==========================================
+  // WEBRTC CALLING LOGIC
+  // ==========================================
+  const sendWebRTCSignal = (payload) => {
+    if (stompClientRef.current) {
+      stompClientRef.current.publish({ destination: '/app/chat.signal', body: JSON.stringify(payload) });
+    }
+  };
+
+  const startCall = async (video = true) => {
+    try {
+      setIsVideoCall(video);
+      setCallState('in-call');
+      
+      const stream = await navigator.mediaDevices.getUserMedia({ video, audio: true });
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      localStreamRef.current = stream;
+
+      peerConnectionRef.current = new RTCPeerConnection(rtcConfiguration);
+      
+      stream.getTracks().forEach(track => peerConnectionRef.current.addTrack(track, stream));
+
+      peerConnectionRef.current.ontrack = (event) => {
+        if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
+      };
+
+      peerConnectionRef.current.onicecandidate = (event) => {
+        if (event.candidate) {
+          sendWebRTCSignal({ type: 'ice-candidate', candidate: event.candidate, recipientEmail: activeChat });
+        }
+      };
+
+      const offer = await peerConnectionRef.current.createOffer();
+      await peerConnectionRef.current.setLocalDescription(offer);
+      sendWebRTCSignal({ type: 'offer', sdp: offer, recipientEmail: activeChat, isVideo: video });
+
+    } catch (err) {
+      console.error(err);
+      showToast("Camera or Microphone access denied", "error");
+      setCallState('idle');
+    }
+  };
+
+  const acceptCall = async () => {
+    try {
+      setIsVideoCall(incomingCallData.isVideo);
+      setCallState('in-call');
+      
+      const stream = await navigator.mediaDevices.getUserMedia({ video: incomingCallData.isVideo, audio: true });
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      localStreamRef.current = stream;
+
+      peerConnectionRef.current = new RTCPeerConnection(rtcConfiguration);
+      stream.getTracks().forEach(track => peerConnectionRef.current.addTrack(track, stream));
+
+      peerConnectionRef.current.ontrack = (event) => {
+        if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
+      };
+
+      peerConnectionRef.current.onicecandidate = (event) => {
+        if (event.candidate) {
+          sendWebRTCSignal({ type: 'ice-candidate', candidate: event.candidate, recipientEmail: incomingCallData.senderEmail });
+        }
+      };
+
+      await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(incomingCallData.sdp));
+      const answer = await peerConnectionRef.current.createAnswer();
+      await peerConnectionRef.current.setLocalDescription(answer);
+      sendWebRTCSignal({ type: 'answer', sdp: answer, recipientEmail: incomingCallData.senderEmail });
+
+    } catch (err) {
+      console.error(err);
+      showToast("Camera or Microphone access denied", "error");
+      rejectCall();
+    }
+  };
+
+  const rejectCall = () => {
+    sendWebRTCSignal({ type: 'end-call', recipientEmail: incomingCallData.senderEmail });
+    setCallState('idle');
+    setIncomingCallData(null);
+  };
+
+  const endCall = () => {
+    const peerEmail = callState === 'ringing' ? incomingCallData?.senderEmail : activeChat;
+    if (peerEmail) sendWebRTCSignal({ type: 'end-call', recipientEmail: peerEmail });
+    
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
+      localStreamRef.current = null;
+    }
+    setCallState('idle');
+    setIncomingCallData(null);
+  };
+
+  // ==========================================
+  // WEBSOCKET & CHAT LOGIC
+  // ==========================================
   const connectWebSocket = (userEmail) => {
     const client = new Client({
       webSocketFactory: () => new SockJS(`${BACKEND_URL}/ws`),
-      reconnectDelay: 5000, // Auto-reconnect if network drops
+      reconnectDelay: 5000,
       heartbeatIncoming: 4000,
       heartbeatOutgoing: 4000,
       onConnect: () => {
+        // Chat Messages
         client.subscribe(`/queue/messages/${userEmail}`, (message) => {
           const incomingMessage = JSON.parse(message.body);
-          
           if (incomingMessage.senderEmail === activeChatRef.current) {
             setMessages((prev) => {
-              // Robust duplicate check using UUID
               const isDuplicate = prev.some(m => m.id && m.id === incomingMessage.id);
               return isDuplicate ? prev : [...prev, incomingMessage];
             });
           } else if (incomingMessage.senderEmail !== currentUserRef.current?.email) {
-            setUnreadCounts((prev) => ({
-              ...prev,
-              [incomingMessage.senderEmail]: (prev[incomingMessage.senderEmail] || 0) + 1
-            }));
+            setUnreadCounts((prev) => ({ ...prev, [incomingMessage.senderEmail]: (prev[incomingMessage.senderEmail] || 0) + 1 }));
           }
           setIsRemoteTyping(false);
           if (remoteTypingTimeoutRef.current) clearTimeout(remoteTypingTimeoutRef.current);
         });
         
+        // Typing Indicators
         client.subscribe(`/queue/typing/${userEmail}`, (message) => {
           const data = JSON.parse(message.body);
           if (data.senderEmail === activeChatRef.current) {
             setIsRemoteTyping(data.isTyping === 'true');
-            // Auto-clear typing indicator if network drops mid-type
             if (remoteTypingTimeoutRef.current) clearTimeout(remoteTypingTimeoutRef.current);
             if (data.isTyping === 'true') {
               remoteTypingTimeoutRef.current = setTimeout(() => setIsRemoteTyping(false), 3000);
             }
+          }
+        });
+
+        // --- NEW: WEBRTC SIGNALING SUBSCRIPTION ---
+        client.subscribe(`/queue/signaling/${userEmail}`, async (message) => {
+          const data = JSON.parse(message.body);
+          
+          if (data.type === 'offer') {
+            setIncomingCallData(data);
+            setCallState('ringing');
+          } else if (data.type === 'answer' && peerConnectionRef.current) {
+            await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          } else if (data.type === 'ice-candidate' && peerConnectionRef.current) {
+            await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
+          } else if (data.type === 'end-call') {
+            if (peerConnectionRef.current) peerConnectionRef.current.close();
+            if (localStreamRef.current) localStreamRef.current.getTracks().forEach(track => track.stop());
+            setCallState('idle');
+            setIncomingCallData(null);
           }
         });
       },
@@ -239,11 +360,9 @@ export default function NeosisChat() {
 
   const handleSendMessage = (e) => {
     if (e) e.preventDefault();
-    // Added 5000 character length limit to prevent UI freezing
     if (newMessage.trim() === '' || newMessage.length > 5000 || !stompClientRef.current) return;
     
     const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    // Use highly secure UUID to prevent millisecond collisions
     const uniqueId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Date.now().toString(); 
     
     const chatMessage = {
@@ -279,10 +398,8 @@ export default function NeosisChat() {
     typingTimeoutRef.current = setTimeout(() => sendTypingStatus(false), 1500);
   };
 
-  // Performance Optimization: Search is memoized to prevent lag on large histories
   const displayedMessages = useMemo(() => {
     if (!isSearching || !searchQuery.trim()) return messages;
-    // We still return all messages to maintain chat context, but we will highlight the matches below
     return messages;
   }, [messages, isSearching, searchQuery]);
 
@@ -297,13 +414,72 @@ export default function NeosisChat() {
   }
 
   return (
-    <div className="flex h-screen bg-slate-50 dark:bg-slate-950 p-2 md:p-4 transition-colors duration-300 font-sans">
+    <div className="flex h-screen bg-slate-50 dark:bg-slate-950 p-2 md:p-4 transition-colors duration-300 font-sans relative">
       
+      {/* ================= WEBRTC CALL UI OVERLAY ================= */}
+      <AnimatePresence>
+        {callState !== 'idle' && (
+          <motion.div 
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="absolute inset-0 z-[100] bg-slate-900/95 backdrop-blur-xl flex flex-col items-center justify-center"
+          >
+            {callState === 'ringing' ? (
+              // INCOMING CALL UI
+              <div className="flex flex-col items-center text-white">
+                <div className={`w-32 h-32 rounded-full mb-6 flex items-center justify-center text-4xl font-bold bg-gradient-to-br ${getAvatarGradient(formatName(incomingCallData?.senderEmail))} shadow-2xl animate-bounce`}>
+                  {formatName(incomingCallData?.senderEmail).charAt(0)}
+                </div>
+                <h2 className="text-3xl font-bold mb-2">{formatName(incomingCallData?.senderEmail)}</h2>
+                <p className="text-slate-400 mb-12">{incomingCallData?.isVideo ? 'Incoming Video Call...' : 'Incoming Audio Call...'}</p>
+                <div className="flex gap-8">
+                  <button onClick={rejectCall} className="w-16 h-16 bg-rose-500 rounded-full flex items-center justify-center hover:bg-rose-600 transition shadow-lg shadow-rose-500/30 text-white">
+                    <PhoneOff size={28} />
+                  </button>
+                  <button onClick={acceptCall} className="w-16 h-16 bg-emerald-500 rounded-full flex items-center justify-center hover:bg-emerald-600 transition shadow-lg shadow-emerald-500/30 text-white animate-pulse">
+                    {incomingCallData?.isVideo ? <Video size={28} /> : <PhoneCall size={28} />}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              // ACTIVE CALL UI
+              <div className="w-full h-full p-4 flex flex-col relative max-w-6xl mx-auto">
+                <div className="flex-1 relative bg-black rounded-3xl overflow-hidden shadow-2xl border border-slate-800 flex items-center justify-center">
+                  
+                  {/* Remote Video (Big Screen) - Or Audio Avatar if audio-only */}
+                  {isVideoCall ? (
+                    <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
+                  ) : (
+                    <div className={`w-48 h-48 rounded-full flex items-center justify-center text-6xl font-bold bg-gradient-to-br ${getAvatarGradient(formatName(activeChat || incomingCallData?.senderEmail))} shadow-2xl animate-pulse`}>
+                      {formatName(activeChat || incomingCallData?.senderEmail).charAt(0)}
+                    </div>
+                  )}
+                  
+                  {/* Local Video (Picture in Picture) */}
+                  {isVideoCall && (
+                    <div className="absolute top-6 right-6 w-32 md:w-48 aspect-video bg-slate-800 rounded-xl overflow-hidden shadow-2xl border-2 border-slate-700">
+                      <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
+                    </div>
+                  )}
+                </div>
+                
+                {/* Call Controls */}
+                <div className="h-24 flex items-center justify-center gap-6 mt-4">
+                  <button onClick={endCall} className="w-16 h-16 bg-rose-500 rounded-full flex items-center justify-center text-white hover:bg-rose-600 shadow-lg shadow-rose-500/30 transition">
+                    <PhoneOff size={28} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {/* ========================================================= */}
+
       <AnimatePresence>
         {toast && (
           <motion.div 
             initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} 
-            className={`absolute top-8 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-full text-sm font-semibold shadow-2xl flex items-center gap-2 ${toast.type === 'error' ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-white'}`}
+            className={`absolute top-8 left-1/2 -translate-x-1/2 z-[60] px-6 py-3 rounded-full text-sm font-semibold shadow-2xl flex items-center gap-2 ${toast.type === 'error' ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-white'}`}
           >
             {toast.type === 'success' && <Check size={16} />}
             {toast.message}
@@ -429,7 +605,7 @@ export default function NeosisChat() {
           </div>
         </div>
 
-        {/* ================= RIGHT SIDEBAR (Main Chat Area) ================= */}
+        {/* ================= RIGHT SIDEBAR ================= */}
         <div className={`${!activeChat ? 'hidden md:flex' : 'flex'} flex-1 flex-col bg-white dark:bg-slate-950 relative`}>
           
           <div className="absolute inset-0 opacity-[0.03] dark:opacity-[0.02] pointer-events-none" 
@@ -471,8 +647,11 @@ export default function NeosisChat() {
 
                 {/* Header Action Icons */}
                 <div className="flex items-center gap-4 text-slate-400 dark:text-slate-500">
-                  <button onClick={() => showToast("Voice calls coming soon!", "success")} className="hover:text-indigo-500 transition"><Phone size={20}/></button>
-                  <button onClick={() => showToast("Video calls coming soon!", "success")} className="hover:text-indigo-500 transition"><Video size={22}/></button>
+                  {/* --- WIRED WEBRTC BUTTONS --- */}
+                  <button onClick={() => startCall(false)} className="hover:text-indigo-500 transition"><Phone size={20}/></button>
+                  <button onClick={() => startCall(true)} className="hover:text-indigo-500 transition"><Video size={22}/></button>
+                  {/* --------------------------------- */}
+
                   <div className="w-px h-6 bg-slate-200 dark:bg-slate-800 mx-1"></div>
                   
                   <button 

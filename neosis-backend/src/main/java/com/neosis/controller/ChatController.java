@@ -24,7 +24,6 @@ public class ChatController {
     @MessageMapping("/chat.send")
     public void sendMessage(@Payload ChatMessage chatMessage, OAuth2AuthenticationToken token) {
         
-        // --- LAYER 1: IDENTITY VERIFICATION ---
         if (token == null) return; 
 
         Map<String, Object> attributes = token.getPrincipal().getAttributes();
@@ -35,13 +34,10 @@ public class ChatController {
             return; 
         }
 
-        // --- LAYER 2: XSS SANITIZATION (CRITICAL FIX) ---
-        // HtmlUtils.htmlEscape() correctly sanitizes malicious scripts now
         String safeContent = HtmlUtils.htmlEscape(chatMessage.getContent());
         chatMessage.setContent(safeContent);
         // -----------------------------------------------------------
 
-        // --- LAYER 3: DATABASE PERSISTENCE ---
         chatMessageRepository.save(chatMessage);
         // -----------------------------------------------------------
 
@@ -54,5 +50,18 @@ public class ChatController {
         
         String recipientEmail = payload.get("recipientEmail");
         messagingTemplate.convertAndSend("/queue/typing/" + recipientEmail, payload);
+    }
+
+    // --- NEW: WEBRTC SIGNALING ENDPOINT ---
+    @MessageMapping("/chat.signal")
+    public void processWebRTCSignal(@Payload Map<String, Object> payload, OAuth2AuthenticationToken token) {
+        if (token == null) return; // Prevent unauthorized signaling
+        
+        String senderEmail = (String) token.getPrincipal().getAttributes().get("email");
+        String recipientEmail = (String) payload.get("recipientEmail");
+
+        payload.put("senderEmail", senderEmail);
+
+        messagingTemplate.convertAndSend("/queue/signaling/" + recipientEmail, payload);
     }
 }
