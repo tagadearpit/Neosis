@@ -19,10 +19,12 @@ public class ChatMessage {
     
     private String timestamp; // Frontend display string (e.g. "10:25 AM")
 
-    // CRITICAL FIX: Server-side timestamp for accurate database sorting
     @CreationTimestamp
     @Column(updatable = false)
     private LocalDateTime createdAt;
+
+    @Transient
+    private String localId;
 
     public ChatMessage() {}
 
@@ -50,4 +52,7 @@ public class ChatMessage {
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+
+    public String getLocalId() { return localId; }
+    public void setLocalId(String localId) { this.localId = localId; }
 }
