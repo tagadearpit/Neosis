@@ -8,6 +8,11 @@
     box-sizing: border-box;
   }
 
+  /* Global smooth color transitions for toggling dark mode */
+  * {
+    transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+  }
+
   /* 100dvh perfectly handles mobile browser address bars */
   html, body, #root {
     height: 100dvh;
@@ -32,7 +37,7 @@
 }
 
 /* ==========================================
-   Premium Custom Scrollbar
+   PREMIUM CUSTOM SCROLLBAR
    ========================================== */
 
 /* 1. Firefox Support */
@@ -70,4 +75,78 @@ html.dark .custom-scrollbar::-webkit-scrollbar-thumb {
 
 html.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background-color: rgba(71, 85, 105, 0.7);
+}
+
+/* ==========================================
+   ANIMATED GRADIENT BACKGROUND
+   ========================================== */
+.animated-gradient-bg {
+  background: linear-gradient(135deg, #1e3a8a, #4f46e5, #7c3aed, #2563eb);
+  background-size: 300% 300%;
+  animation: gradientMove 12s ease infinite;
+}
+
+@keyframes gradientMove {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* ==========================================
+   GLASSMORPHISM UTILITY
+   ========================================== */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ==========================================
+   PREMIUM UI ENHANCEMENTS
+   ========================================== */
+
+/* Floating Animation */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+.float {
+  animation: float 4s ease-in-out infinite;
+}
+
+/* Neon Glow Effect */
+.neon-glow {
+  box-shadow:
+    0 0 10px rgba(99,102,241,.5),
+    0 0 20px rgba(99,102,241,.4),
+    0 0 40px rgba(99,102,241,.3);
+}
+
+/* Pulse Border Effect */
+@keyframes pulseBorder {
+  0% { box-shadow: 0 0 0 0 rgba(99,102,241,.5); }
+  100% { box-shadow: 0 0 0 12px rgba(99,102,241,0); }
+}
+
+.pulse-border {
+  animation: pulseBorder 2s infinite;
+}
+
+/* Hover Cards */
+.hover-card {
+  transition: transform .3s ease, box-shadow .3s ease;
+}
+
+.hover-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+}
+
+/* Premium Chat Wallpaper */
+.chat-wallpaper {
+  background-image:
+    radial-gradient(circle at 20% 20%, rgba(99,102,241,.08), transparent 40%),
+    radial-gradient(circle at 80% 80%, rgba(139,92,246,.08), transparent 40%);
 }
