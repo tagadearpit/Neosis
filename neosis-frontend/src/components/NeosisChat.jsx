@@ -44,7 +44,6 @@ class ChatErrorBoundary extends Component {
 
 const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// NOTE: If backend escapes HTML, it should be disabled there so React can render clean text.
 const formatName = (email) => {
   if (!email) return '';
   const namePart = email.split('@')[0];
@@ -136,7 +135,6 @@ function NeosisChatInner() {
       setFriends(friendsRes.data);
       setPendingRequests(pendingRes.data);
       
-      // FIX 13: Clean up ghost unread counts for deleted friends
       setUnreadCounts(prev => {
         const newCounts = { ...prev };
         Object.keys(newCounts).forEach(email => {
@@ -155,7 +153,6 @@ function NeosisChatInner() {
 
   const handleAcceptTerms = async () => {
     try {
-      // FIX 12: Ensure API succeeds before granting access
       await api.post('/api/users/accept-terms').catch(() => { throw new Error("Backend unavailable"); });
       localStorage.setItem('neosis_tc_accepted', 'true');
       setHasAcceptedTC(true);
@@ -171,7 +168,6 @@ function NeosisChatInner() {
       stompClientRef.current.publish({ destination: '/app/chat.signal', body: JSON.stringify({ type: 'end-call', recipientEmail: peerEmail }) });
     }
     
-    // FIX 7: Always nullify ref, regardless of state
     if (peerConnectionRef.current) {
       if (peerConnectionRef.current.signalingState !== 'closed') {
         peerConnectionRef.current.close();
@@ -184,7 +180,7 @@ function NeosisChatInner() {
       localStreamRef.current = null; 
     }
 
-    iceCandidateQueueRef.current = []; // Clear queue
+    iceCandidateQueueRef.current = []; 
     setCallState('idle'); 
     setIncomingCallData(null);
   }, []);
@@ -265,10 +261,22 @@ function NeosisChatInner() {
       try {
         const userRes = await api.get('/api/users/me');
         if (!isMounted) return;
+
+        // CRITICAL FIX: Gracefully handle missing auth and redirect to your login page
+        if (!userRes.data || !userRes.data.email) {
+          window.location.href = '/login'; 
+          return;
+        }
+
         setCurrentUser(userRes.data);
         connectWebSocket(userRes.data.email);
         fetchSidebarData();
-      } catch (err) { console.error("Auth error", err); }
+      } catch (err) { 
+        console.error("Auth error", err);
+        // CRITICAL FIX: If API throws 401/403 Unauthorized, safely redirect
+        if (!isMounted) return;
+        window.location.href = '/login'; 
+      }
     };
     initializeApp();
 
@@ -284,11 +292,10 @@ function NeosisChatInner() {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, isRemoteTyping]); 
 
-  // --- WEBRTC ACTIONS ---
   const sendWebRTCSignal = (payload) => { if (stompClientRef.current) stompClientRef.current.publish({ destination: '/app/chat.signal', body: JSON.stringify(payload) }); };
   
   const handleStartCall = async (video = true) => {
-    if (callState !== 'idle') return; // FIX 3: Prevent race condition double-calls
+    if (callState !== 'idle') return; 
     try {
       setIsVideoCall(video); setCallState('in-call');
       const stream = await navigator.mediaDevices.getUserMedia({ video, audio: true });
@@ -317,7 +324,6 @@ function NeosisChatInner() {
       
       await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(incomingCallData.sdp));
       
-      // FIX 4: Drain ICE queue safely on the Callee side
       while (iceCandidateQueueRef.current.length > 0) {
         await peerConnectionRef.current.addIceCandidate(iceCandidateQueueRef.current.shift());
       }
@@ -330,12 +336,11 @@ function NeosisChatInner() {
 
   const handleRejectCall = () => { 
     sendWebRTCSignal({ type: 'end-call', recipientEmail: incomingCallData.senderEmail }); 
-    iceCandidateQueueRef.current = []; // Clear queue
+    iceCandidateQueueRef.current = []; 
     setCallState('idle'); 
     setIncomingCallData(null); 
   };
 
-  // --- STANDARD HANDLERS ---
   const handleSendRequest = async (e) => { 
     e.preventDefault(); 
     if (!addEmailInput || !/\S+@\S+\.\S+/.test(addEmailInput)) { showToast("Invalid email.", "error"); return; } 
@@ -377,7 +382,6 @@ function NeosisChatInner() {
 
   if (!currentUser) return <div className="flex h-screen bg-[#0f172a] items-center justify-center"><Loader2 size={48} className="text-indigo-500 animate-spin" /></div>;
 
-  // FIX 2: Dynamic Toast Background Generation
   const getToastBg = (type) => {
     if (type === 'error') return 'bg-rose-500';
     if (type === 'info') return 'bg-indigo-500';
@@ -535,7 +539,6 @@ function NeosisChatInner() {
             </form>
           </div>
 
-          {/* FIX 1: Flexbox-safe layout containment */}
           <motion.div variants={listVariants} initial="hidden" animate="show" className="flex-1 overflow-y-auto custom-scrollbar px-3 space-y-1 pb-4 contain-content">
             {friends.map(friend => {
               const fName = formatName(friend);
