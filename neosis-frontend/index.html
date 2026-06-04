@@ -4,20 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     
-    <!-- BRANDING -->
     <title>Neosis • Secure Messaging</title>
     <link rel="icon" type="image/png" href="/pwa-192x192.png" />
     <meta name="theme-color" content="#0d1b2a" />
 
-    <!-- SECURITY: Enterprise Content Security Policy -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' http://localhost:8080 https://neosis-backend.onrender.com wss://neosis-backend.onrender.com ws://localhost:8080 stun:stun.l.google.com:19302 stun:stun1.l.google.com:19302; media-src 'self' blob:; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' http://localhost:8080 https://neosis-backend.onrender.com wss://neosis-backend.onrender.com ws://localhost:8080 stun.l.google.com:19302 stun1.l.google.com:19302; media-src 'self' blob:; img-src 'self' data: https://www.svgrepo.com https://*.googleusercontent.com; object-src 'none'; base-uri 'self';">
 
-    <!-- FONTS -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
-    <!-- GLOBAL POLYFILL (Required for SockJS in Vite) -->
     <script>
       if (typeof global === 'undefined') {
         window.global = window;
