@@ -1,10 +1,17 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import { VitePWA } from 'vite-plugin-pwa'
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
+import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
   plugins: [
+    // 1. Tailwind must come first to handle the CSS processing correctly
+    tailwindcss(), 
+    
+    // 2. Then your React plugin
     react(),
+    
+    // 3. Finally, your PWA plugin
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png'],
@@ -12,9 +19,9 @@ export default defineConfig({
         name: 'Neosis Secure Chat',
         short_name: 'Neosis',
         description: 'End-to-end encrypted real-time communication',
-        theme_color: '#1d4ed8', // Matches your blue-700 header
+        theme_color: '#1d4ed8',
         background_color: '#ffffff',
-        display: 'standalone', // This is the magic word that hides the browser URL bar!
+        display: 'standalone',
         icons: [
           {
             src: 'pwa-192x192.png',
@@ -31,4 +38,4 @@ export default defineConfig({
       }
     })
   ]
-})
+});
