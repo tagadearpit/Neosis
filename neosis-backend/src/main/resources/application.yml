@@ -7,6 +7,11 @@ server:
         same-site: "none" 
         secure: true
 
+# Custom property for dynamic frontend routing
+app:
+  frontend:
+    url: ${FRONTEND_URL:https://neosis-static-site.onrender.com}
+
 spring:
   application:
     name: neosis-backend
