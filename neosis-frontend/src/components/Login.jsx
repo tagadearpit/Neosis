@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Lock, Shield, Eye, EyeOff, ArrowRight, X, RefreshCw, AlertTriangle, CheckCircle, Fingerprint } from 'lucide-react';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8080';
+// CRITICAL FIX: Safely falls back to your live Render backend URL
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://neosis-433w.onrender.com';
 
 export default function Login() {
   const [screen, setScreen] = useState('LOGIN'); // 'LOGIN' | 'SIGNUP' | 'RESET'
@@ -150,7 +151,7 @@ export default function Login() {
                   <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                 </button>
 
-                {/* HARD-WIRED GOOGLE OAUTH REDIRECT LINK */}
+                {/* GOOGLE OAUTH REDIRECT LINK */}
                 <button type="button" onClick={handleGoogleLogin} className="w-full bg-[#171f33] border border-[#3c4a42] text-[#dae2fd] font-mono text-xs py-3 px-6 rounded hover:border-[#4edea3]/50 flex items-center justify-center gap-2.5 cursor-pointer transition-all">
                   <svg className="w-4 h-4" viewBox="0 0 24 24">
                     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"></path>
