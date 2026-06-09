@@ -1,9 +1,10 @@
 server:
   port: 8080
+  forward-headers-strategy: framework # CRITICAL: Forces Tomcat to read Render's HTTPS proxy
   servlet:
     session:
       cookie:
-        same-site: none
+        same-site: "none" 
         secure: true
 
 spring:
@@ -19,7 +20,6 @@ spring:
   # JPA & Hibernate Settings
   jpa:
     open-in-view: false 
-    database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:
       ddl-auto: update 
     show-sql: true    
