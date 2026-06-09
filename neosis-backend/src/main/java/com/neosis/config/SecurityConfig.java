@@ -31,6 +31,7 @@ public class SecurityConfig {
                 // Both localhost and your live Render frontend are now allowed
                 config.setAllowedOrigins(List.of("http://localhost:5173", "https://neosis-static-site.onrender.com")); 
                 config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+                config.setAllowedHeaders(List.of("*")); // CRITICAL FIX: Allows Axios preflight headers
                 config.setAllowCredentials(true);
                 return config;
             }))
