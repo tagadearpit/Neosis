@@ -1,16 +1,24 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useContext } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ShieldAlert } from 'lucide-react';
 import Login from './components/Login';
 import NeosisChatWrapped from './components/NeosisChat';
 
-// Centralized Route Protection Wrapper
-// NOTE: Since Neosis uses HttpOnly JSESSIONID cookies, you should tie this
-// to an AuthContext that pings your backend /api/auth/status on initial load.
+// Import the new Auth Context
+import { AuthProvider, AuthContext } from './context/AuthContext';
+
+// Real Route Protection Wrapper
 function ProtectedRoute({ children }) {
-  // Replace this with your actual global auth state hook/logic
-  const isAuthenticated = true; 
+  const { isAuthenticated, isLoading } = useContext(AuthContext);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-[#060e20] flex items-center justify-center text-[#4edea3] font-mono text-xs animate-pulse">
+        Verifying Secure Session...
+      </div>
+    );
+  }
 
   return isAuthenticated ? children : <Navigate to="/login" replace />;
 }
@@ -19,18 +27,15 @@ export default function App() {
   const [securityAlerts, setSecurityAlerts] = useState([]);
   
   const timeoutsRef = useRef(new Set());
-  // FIX: Using a Map to track cooldowns independently per alert message
   const alertCooldowns = useRef(new Map());
 
   const triggerSecurityAlert = useCallback((message) => {
     const now = Date.now();
     const lastTime = alertCooldowns.current.get(message) || 0;
     
-    // Independent 2-second cooldown per specific action
     if (now - lastTime < 2000) return;
     alertCooldowns.current.set(message, now);
 
-    // FIX: Safely fallback if crypto is completely undefined in older environments
     const id = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).substring(2, 9);
     
     setSecurityAlerts((prev) => [...prev, { id, message }]);
@@ -58,7 +63,6 @@ export default function App() {
     };
 
     const handleKeyDown = (e) => {
-      // FIX: Future-proof Mac detection using userAgentData fallback
       const isMac = navigator.userAgentData?.platform === 'macOS' || navigator.userAgent?.includes('Mac');
 
       if (e.key === 'F12') {
@@ -87,7 +91,6 @@ export default function App() {
       }
     };
 
-    // FIX: Attached to window instead of document for higher event priority
     window.addEventListener('contextmenu', handleContextMenu);
     window.addEventListener('keydown', handleKeyDown);
 
@@ -98,7 +101,7 @@ export default function App() {
   }, [triggerSecurityAlert]);
 
   return (
-    <>
+    <AuthProvider>
       <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[99999] flex flex-col gap-3 pointer-events-none w-full max-w-sm px-4">
         <AnimatePresence>
           {securityAlerts.map((alert) => (
@@ -130,7 +133,6 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           
-          {/* Centralized Protected Routes */}
           <Route path="/" element={
             <ProtectedRoute>
               <NeosisChatWrapped />
@@ -145,6 +147,6 @@ export default function App() {
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </Router>
-    </>
+    </AuthProvider>
   );
 }
