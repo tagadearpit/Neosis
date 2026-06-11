@@ -45,7 +45,8 @@ public class SecurityConfig {
                 .ignoringRequestMatchers("/login/**", "/oauth2/**") 
             )
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/", "/login", "/ws/**").permitAll() 
+                // CRITICAL FIX: Added /api/users/me to prevent 302 redirect loops during frontend auth checks
+                .requestMatchers("/", "/login", "/ws/**", "/api/users/me").permitAll() 
                 .anyRequest().authenticated()
             )
             .oauth2Login(oauth2 -> oauth2
