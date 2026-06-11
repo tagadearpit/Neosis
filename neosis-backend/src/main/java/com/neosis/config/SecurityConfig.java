@@ -32,20 +32,34 @@ public class SecurityConfig {
         http
             .cors(cors -> cors.configurationSource(request -> {
                 CorsConfiguration config = new CorsConfiguration();
-                config.setAllowedOrigins(List.of("http://localhost:5173", frontendUrl)); 
+                
+                // Clean the frontend URL just in case it has a trailing slash
+                String cleanFrontendUrl = frontendUrl.endsWith("/") ? 
+                    frontendUrl.substring(0, frontendUrl.length() - 1) : frontendUrl;
+
+                // Explicitly define the allowed origins. NO WILDCARDS ALLOWED here!
+                config.setAllowedOrigins(List.of("http://localhost:5173", cleanFrontendUrl)); 
                 config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-                config.setAllowedHeaders(List.of("*")); 
-                config.setAllowCredentials(true);
+                
+                // CRITICAL FIX: Explicitly allow common headers instead of a wildcard (*)
+                config.setAllowedHeaders(List.of("Authorization", "Cache-Control", "Content-Type", "X-XSRF-TOKEN")); 
+                
+                // CRITICAL FIX: This allows the React frontend to see the JSESSIONID cookie
+                config.setExposedHeaders(List.of("Set-Cookie")); 
+                
+                // Required for cross-origin session cookies
+                config.setAllowCredentials(true); 
+                
                 return config;
             }))
-            // CRITICAL FIX: Enable CSRF but expose token to React and ignore OAuth paths
+            // Enable CSRF but expose token to React and ignore OAuth paths
             .csrf(csrf -> csrf
                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                 .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
                 .ignoringRequestMatchers("/login/**", "/oauth2/**") 
             )
             .authorizeHttpRequests(auth -> auth
-                // CRITICAL FIX: Added /api/users/me to prevent 302 redirect loops during frontend auth checks
+                // Added /api/users/me to prevent 302 redirect loops during frontend auth checks
                 .requestMatchers("/", "/login", "/ws/**", "/api/users/me").permitAll() 
                 .anyRequest().authenticated()
             )
