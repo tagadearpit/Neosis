@@ -9,7 +9,8 @@ import {
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8080';
+// CRITICAL FIX: Point directly to the live Render backend URL
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://neosis-433w.onrender.com';
 
 const api = axios.create({
   baseURL: BACKEND_URL,
