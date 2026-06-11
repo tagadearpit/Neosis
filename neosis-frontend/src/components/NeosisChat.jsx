@@ -9,9 +9,10 @@ import {
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
 
-// CRITICAL FIX: Point directly to the live Render backend URL
+// Point directly to the live Render backend URL
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://neosis-433w.onrender.com';
 
+// Configured Axios Instance
 const api = axios.create({
   baseURL: BACKEND_URL,
   withCredentials: true
@@ -263,7 +264,7 @@ function NeosisChatInner() {
         const userRes = await api.get('/api/users/me');
         if (!isMounted) return;
 
-        // CRITICAL FIX: Gracefully handle missing auth and redirect to your login page
+        // Gracefully handle missing auth and redirect to your login page
         if (!userRes.data || !userRes.data.email) {
           window.location.href = '/login'; 
           return;
@@ -274,7 +275,7 @@ function NeosisChatInner() {
         fetchSidebarData();
       } catch (err) { 
         console.error("Auth error", err);
-        // CRITICAL FIX: If API throws 401/403 Unauthorized, safely redirect
+        // If API throws 401/403 Unauthorized, safely redirect
         if (!isMounted) return;
         window.location.href = '/login'; 
       }
