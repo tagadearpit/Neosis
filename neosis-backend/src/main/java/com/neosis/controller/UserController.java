@@ -46,8 +46,6 @@ public class UserController {
             Map<String, String> notification = new HashMap<>();
             notification.put("senderName", senderName);
             notification.put("message", senderName + " wants to start a conversation!");
-
-            // FIRE THE WEBSOCKET EVENT! Send it specifically to the recipient's email topic
             messagingTemplate.convertAndSend("/topic/notifications/" + email, notification);
 
             return ResponseEntity.ok().body("User found");
