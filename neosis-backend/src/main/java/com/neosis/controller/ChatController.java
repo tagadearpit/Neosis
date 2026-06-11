@@ -55,7 +55,7 @@ public class ChatController {
     // --- NEW: WEBRTC SIGNALING ENDPOINT ---
     @MessageMapping("/chat.signal")
     public void processWebRTCSignal(@Payload Map<String, Object> payload, OAuth2AuthenticationToken token) {
-        if (token == null) return; // Prevent unauthorized signaling
+        if (token == null) return; 
         
         String senderEmail = (String) token.getPrincipal().getAttributes().get("email");
         String recipientEmail = (String) payload.get("recipientEmail");

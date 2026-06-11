@@ -37,7 +37,6 @@ public class ContactController {
         return requestRepository.findByReceiverEmailAndStatus(myEmail, "PENDING");
     }
 
-    // CRITICAL FIX: Added OAuth token & IDOR Authorization check
     @PostMapping("/accept")
     public String acceptRequest(@RequestParam Long requestId, OAuth2AuthenticationToken token) {
         if (token == null) return "Unauthorized";
@@ -45,7 +44,6 @@ public class ContactController {
 
         ChatRequest req = requestRepository.findById(requestId).orElse(null);
         if (req != null) {
-            // SECURITY CHECK: Is the logged-in user the actual receiver of this request?
             if (!req.getReceiverEmail().equalsIgnoreCase(myEmail)) {
                 return "Forbidden: You cannot accept a request meant for someone else.";
             }

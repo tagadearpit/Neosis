@@ -15,14 +15,10 @@ public class MessageController {
     @Autowired
     private ChatMessageRepository chatMessageRepository;
 
-    // CRITICAL FIX: The missing endpoint the frontend needs to load chat histories!
     @GetMapping("/history/{friendEmail}")
     public List<ChatMessage> getChatHistory(@PathVariable String friendEmail, OAuth2AuthenticationToken token) {
         if (token == null) return List.of();
-        
         String myEmail = (String) token.getPrincipal().getAttributes().get("email");
-        
-        // Returns the conversation history between the logged-in user and the friend
         return chatMessageRepository.findChatHistory(myEmail, friendEmail);
     }
 }

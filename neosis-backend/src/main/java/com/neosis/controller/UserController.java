@@ -14,7 +14,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/users")
-@CrossOrigin(origins = {"http://localhost:5173", "https://neosis-static-site.onrender.com"}, allowCredentials = "true")
 public class UserController {
 
     @Autowired
