@@ -1,5 +1,5 @@
 import React, { createContext, useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api'; // CRITICAL FIX: Import your configured api instance
 
 export const AuthContext = createContext(null);
 
@@ -10,9 +10,9 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const verifySession = async () => {
       try {
-        const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://neosis-433w.onrender.com';
-        // Ping the backend. withCredentials: true ensures the HttpOnly cookie is sent.
-        await axios.get(`${BACKEND_URL}/api/users/me`, { withCredentials: true });
+        // Ping the backend using the configured instance.
+        // It automatically knows the BACKEND_URL and attaches credentials!
+        await api.get('/api/users/me'); 
         setIsAuthenticated(true);
       } catch (error) {
         setIsAuthenticated(false);
