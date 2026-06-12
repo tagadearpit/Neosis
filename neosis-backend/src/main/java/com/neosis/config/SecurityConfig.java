@@ -15,6 +15,10 @@ import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.web.cors.CorsConfiguration;
 
+// NEW IMPORTS REQUIRED FOR MOBILE PWA COOKIE FIX
+import org.springframework.security.oauth2.client.web.AuthorizationRequestRepository;
+import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
+
 import java.util.List;
 
 @Configuration
@@ -26,6 +30,10 @@ public class SecurityConfig {
 
     @Value("${app.frontend.url:https://neosis-static-site.onrender.com}")
     private String frontendUrl;
+
+    // INJECT THE NEW COOKIE REPOSITORY
+    @Autowired
+    private HttpCookieOAuth2AuthorizationRequestRepository cookieAuthorizationRequestRepository;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -41,10 +49,10 @@ public class SecurityConfig {
                 config.setAllowedOrigins(List.of("http://localhost:5173", cleanFrontendUrl)); 
                 config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
                 
-                // CRITICAL FIX: Explicitly allow common headers instead of a wildcard (*)
+                // Explicitly allow common headers instead of a wildcard (*)
                 config.setAllowedHeaders(List.of("Authorization", "Cache-Control", "Content-Type", "X-XSRF-TOKEN")); 
                 
-                // CRITICAL FIX: This allows the React frontend to see the JSESSIONID cookie
+                // This allows the React frontend to see the JSESSIONID cookie
                 config.setExposedHeaders(List.of("Set-Cookie")); 
                 
                 // Required for cross-origin session cookies
@@ -64,6 +72,10 @@ public class SecurityConfig {
                 .anyRequest().authenticated()
             )
             .oauth2Login(oauth2 -> oauth2
+                // OVERRIDE DEFAULT SESSION STORAGE WITH SECURE COOKIE STORAGE FOR MOBILE PWA
+                .authorizationEndpoint(authEndpoint -> authEndpoint
+                    .authorizationRequestRepository(cookieAuthorizationRequestRepository)
+                )
                 .successHandler((request, response, authentication) -> {
                     
                     OAuth2User oAuth2User = (OAuth2User) authentication.getPrincipal();
