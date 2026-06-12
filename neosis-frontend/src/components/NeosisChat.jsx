@@ -67,8 +67,27 @@ const highlightText = (text, highlight) => {
   );
 };
 
+/* FEATURE: Robust WebRTC Configuration with fallback TURN servers for restrictive NAT traversal */
 const rtcConfiguration = {
-  iceServers: [ { urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' } ]
+  iceServers: [ 
+    { urls: 'stun:stun.l.google.com:19302' }, 
+    { urls: 'stun:stun1.l.google.com:19302' },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
+  ]
 };
 
 const listVariants = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.05 } } };
@@ -165,29 +184,31 @@ function NeosisChatInner() {
     showToast("Welcome to Neosis!", "success");
   };
 
-  const handleEndCall = useCallback(() => {
-    const peerEmail = callStateRef.current === 'ringing' ? incomingCallDataRef.current?.senderEmail : activeChatRef.current;
-    if (peerEmail && stompClientRef.current) {
-      stompClientRef.current.publish({ destination: '/app/chat.signal', body: JSON.stringify({ type: 'end-call', recipientEmail: peerEmail }) });
-    }
-    
+  const cleanupCallResources = useCallback(() => {
     if (peerConnectionRef.current) {
       if (peerConnectionRef.current.signalingState !== 'closed') {
         peerConnectionRef.current.close();
       }
       peerConnectionRef.current = null;
     }
-
     if (localStreamRef.current) { 
       localStreamRef.current.getTracks().forEach(track => track.stop()); 
       localStreamRef.current = null; 
     }
-
     iceCandidateQueueRef.current = []; 
     setCallState('idle'); 
     setIncomingCallData(null);
   }, []);
 
+  const handleEndCall = useCallback(() => {
+    const peerEmail = callStateRef.current === 'ringing' ? incomingCallDataRef.current?.senderEmail : activeChatRef.current;
+    if (peerEmail && stompClientRef.current && stompClientRef.current.connected) {
+      stompClientRef.current.publish({ destination: '/app/chat.signal', body: JSON.stringify({ type: 'end-call', recipientEmail: peerEmail }) });
+    }
+    cleanupCallResources();
+  }, [cleanupCallResources]);
+
+  /* FEATURE: Main STOMP WebSocket implementation for real-time signaling, messaging, and presence */
   const connectWebSocket = useCallback((userEmail) => {
     const client = new Client({
       webSocketFactory: () => new SockJS(`${BACKEND_URL}/ws`, null, { withCredentials: true }),
@@ -231,13 +252,26 @@ function NeosisChatInner() {
           const pc = peerConnectionRef.current;
           
           if (data.type === 'offer') { 
+            if (callStateRef.current !== 'idle') {
+               if (stompClientRef.current && stompClientRef.current.connected) {
+                 stompClientRef.current.publish({
+                   destination: '/app/chat.signal',
+                   body: JSON.stringify({ type: 'call-rejected', reason: 'busy', recipientEmail: data.senderEmail })
+                 });
+               }
+               return; 
+            }
             setIncomingCallData(data); 
             setCallState('ringing'); 
           } 
           else if (data.type === 'answer' && pc && pc.signalingState !== 'closed') { 
             await pc.setRemoteDescription(new RTCSessionDescription(data.sdp)); 
             while (iceCandidateQueueRef.current.length > 0) {
-              await pc.addIceCandidate(iceCandidateQueueRef.current.shift());
+              if (pc && pc.signalingState !== 'closed') {
+                await pc.addIceCandidate(iceCandidateQueueRef.current.shift());
+              } else {
+                iceCandidateQueueRef.current = [];
+              }
             }
           } 
           else if (data.type === 'ice-candidate' && pc && pc.signalingState !== 'closed') { 
@@ -249,14 +283,28 @@ function NeosisChatInner() {
             }
           } 
           else if (data.type === 'end-call') {
-            handleEndCall();
+            cleanupCallResources(); 
+          }
+          else if (data.type === 'call-rejected') {
+            showToast(`Call declined: User is ${data.reason || 'busy'}`, 'info');
+            cleanupCallResources();
           }
         });
+
+        client.subscribe(`/queue/notifications/${userEmail}`, () => {
+          fetchSidebarData();
+        });
       },
+      onStompError: (frame) => {
+        console.error('STOMP Error:', frame.headers['message'], frame.body);
+      },
+      onWebSocketError: (error) => {
+        console.error('WebSocket Error:', error);
+      }
     });
     client.activate();
     stompClientRef.current = client; 
-  }, [handleEndCall]);
+  }, [cleanupCallResources, fetchSidebarData, showToast]);
 
   useEffect(() => {
     let isMounted = true;
@@ -275,7 +323,11 @@ function NeosisChatInner() {
         fetchSidebarData();
       } catch (err) { 
         if (!isMounted) return;
-        window.location.href = '/login'; 
+        if (err.response?.status === 401 || err.response?.status === 403) {
+          window.location.href = '/login'; 
+        } else {
+          console.error("Auth error", err);
+        }
       }
     };
     initializeApp();
@@ -286,13 +338,17 @@ function NeosisChatInner() {
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       if (remoteTypingTimeoutRef.current) clearTimeout(remoteTypingTimeoutRef.current);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
-      handleEndCall(); 
+      cleanupCallResources(); 
     };
-  }, [fetchSidebarData, connectWebSocket, handleEndCall]);
+  }, [fetchSidebarData, connectWebSocket, cleanupCallResources]);
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, isRemoteTyping]); 
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]); 
 
-  const sendWebRTCSignal = (payload) => { if (stompClientRef.current) stompClientRef.current.publish({ destination: '/app/chat.signal', body: JSON.stringify(payload) }); };
+  const sendWebRTCSignal = (payload) => { 
+    if (stompClientRef.current && stompClientRef.current.connected) { 
+      stompClientRef.current.publish({ destination: '/app/chat.signal', body: JSON.stringify(payload) }); 
+    } 
+  };
   
   const handleStartCall = async (video = true) => {
     if (callState !== 'idle') return; 
@@ -312,38 +368,43 @@ function NeosisChatInner() {
   };
 
   const handleAcceptCall = async () => {
+    if (!incomingCallDataRef.current) return;
     try {
-      setIsVideoCall(incomingCallData.isVideo); setCallState('in-call');
-      const stream = await navigator.mediaDevices.getUserMedia({ video: incomingCallData.isVideo, audio: true });
+      setIsVideoCall(incomingCallDataRef.current.isVideo); setCallState('in-call');
+      const stream = await navigator.mediaDevices.getUserMedia({ video: incomingCallDataRef.current.isVideo, audio: true });
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       localStreamRef.current = stream;
       peerConnectionRef.current = new RTCPeerConnection(rtcConfiguration);
       stream.getTracks().forEach(track => peerConnectionRef.current.addTrack(track, stream));
       peerConnectionRef.current.ontrack = (event) => { if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0]; };
-      peerConnectionRef.current.onicecandidate = (event) => { if (event.candidate) sendWebRTCSignal({ type: 'ice-candidate', candidate: event.candidate, recipientEmail: incomingCallData.senderEmail }); };
+      peerConnectionRef.current.onicecandidate = (event) => { if (event.candidate) sendWebRTCSignal({ type: 'ice-candidate', candidate: event.candidate, recipientEmail: incomingCallDataRef.current.senderEmail }); };
       
-      await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(incomingCallData.sdp));
+      await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(incomingCallDataRef.current.sdp));
       
       while (iceCandidateQueueRef.current.length > 0) {
-        await peerConnectionRef.current.addIceCandidate(iceCandidateQueueRef.current.shift());
+        if (peerConnectionRef.current && peerConnectionRef.current.signalingState !== 'closed') {
+           await peerConnectionRef.current.addIceCandidate(iceCandidateQueueRef.current.shift());
+        } else {
+           iceCandidateQueueRef.current = [];
+        }
       }
 
       const answer = await peerConnectionRef.current.createAnswer();
       await peerConnectionRef.current.setLocalDescription(answer);
-      sendWebRTCSignal({ type: 'answer', sdp: answer, recipientEmail: incomingCallData.senderEmail });
+      sendWebRTCSignal({ type: 'answer', sdp: answer, recipientEmail: incomingCallDataRef.current.senderEmail });
     } catch (err) { showToast("Camera/Mic access denied", "error"); handleRejectCall(); }
   };
 
   const handleRejectCall = () => { 
-    sendWebRTCSignal({ type: 'end-call', recipientEmail: incomingCallData.senderEmail }); 
-    iceCandidateQueueRef.current = []; 
-    setCallState('idle'); 
-    setIncomingCallData(null); 
+    if (incomingCallDataRef.current) {
+        sendWebRTCSignal({ type: 'end-call', recipientEmail: incomingCallDataRef.current.senderEmail }); 
+    }
+    cleanupCallResources();
   };
 
   const handleSendRequest = async (e) => { 
     e.preventDefault(); 
-    if (!addEmailInput || !/\S+@\S+\.\S+/.test(addEmailInput)) { showToast("Invalid email.", "error"); return; } 
+    if (!addEmailInput || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addEmailInput)) { showToast("Invalid email.", "error"); return; } 
     try { await api.post('/api/contacts/request', new URLSearchParams({ receiverEmail: addEmailInput })); setAddEmailInput(''); showToast("Request sent!"); } catch (err) { showToast("Failed to send.", "error"); } 
   };
   
@@ -364,7 +425,7 @@ function NeosisChatInner() {
 
   const handleSendMessage = (e) => {
     if (e) e.preventDefault();
-    if (newMessage.trim() === '' || newMessage.length > 5000 || !stompClientRef.current) return;
+    if (newMessage.trim() === '' || newMessage.length > 5000 || !stompClientRef.current || !stompClientRef.current.connected) return;
     const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const uniqueId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Date.now().toString(); 
     const chatMessage = { localId: uniqueId, senderEmail: currentUser.email, recipientEmail: activeChat, content: newMessage.trim(), timestamp: timeString };
@@ -372,7 +433,7 @@ function NeosisChatInner() {
     setMessages((prev) => [...prev, chatMessage]); setNewMessage(''); sendTypingStatus(false);
   };
 
-  const sendTypingStatus = (isTyping) => { if (!stompClientRef.current || !activeChatRef.current || !currentUserRef.current) return; stompClientRef.current.publish({ destination: '/app/chat.typing', body: JSON.stringify({ senderEmail: currentUserRef.current.email, recipientEmail: activeChatRef.current, isTyping: isTyping.toString() }) }); };
+  const sendTypingStatus = (isTyping) => { if (!stompClientRef.current || !stompClientRef.current.connected || !activeChatRef.current || !currentUserRef.current) return; stompClientRef.current.publish({ destination: '/app/chat.typing', body: JSON.stringify({ senderEmail: currentUserRef.current.email, recipientEmail: activeChatRef.current, isTyping: isTyping.toString() }) }); };
   const handleInputChange = (e) => { setNewMessage(e.target.value); sendTypingStatus(true); if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current); typingTimeoutRef.current = setTimeout(() => sendTypingStatus(false), 1500); };
   const displayedMessages = useMemo(() => { 
     if (!isSearching || !searchQuery.trim()) return messages; 
