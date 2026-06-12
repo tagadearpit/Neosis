@@ -1,6 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@600;700;800&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap');
 @import "tailwindcss";
 
+/* CRITICAL FIX: This tells Tailwind v4 how to activate dark mode via class */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-primary: #4edea3;
   --color-on-primary-container: #00422b;
@@ -26,7 +29,8 @@
   html, body, #root { height: 100dvh; }
   body {
     margin: 0; padding: 0;
-    @apply bg-[#060e20] text-[#dae2fd] overflow-hidden;
+    /* CRITICAL FIX: Allow body to support light/dark classes dynamically */
+    @apply bg-slate-100 text-slate-800 dark:bg-[#060e20] dark:text-[#dae2fd] overflow-hidden transition-colors duration-300;
   }
 }
 

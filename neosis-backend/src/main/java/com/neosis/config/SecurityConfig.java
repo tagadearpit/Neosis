@@ -78,7 +78,8 @@ public class SecurityConfig {
             .csrf(csrf -> csrf
                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                 .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
-                .ignoringRequestMatchers("/login/**", "/oauth2/**", "/ws/**") 
+                // CRITICAL FIX: Ignored /api/** so cross-domain POST requests (Add Contact/Send Message) aren't blocked!
+                .ignoringRequestMatchers("/login/**", "/oauth2/**", "/ws/**", "/api/**") 
             )
             .authorizeHttpRequests(auth -> auth
                 // Allow preflight requests explicitly
