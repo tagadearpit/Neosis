@@ -9,10 +9,8 @@ import {
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
 
-// Point directly to the live Render backend URL
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://neosis-433w.onrender.com';
 
-// Configured Axios Instance
 const api = axios.create({
   baseURL: BACKEND_URL,
   withCredentials: true
@@ -153,15 +151,10 @@ function NeosisChatInner() {
     toastTimeoutRef.current = setTimeout(() => setToast(null), 3000);
   }, []);
 
-  const handleAcceptTerms = async () => {
-    try {
-      await api.post('/api/users/accept-terms').catch(() => { throw new Error("Backend unavailable"); });
-      localStorage.setItem('neosis_tc_accepted', 'true');
-      setHasAcceptedTC(true);
-      showToast("Welcome to Neosis!", "success");
-    } catch (err) {
-      showToast("Network Error: Could not save preferences", "error");
-    }
+  const handleAcceptTerms = () => {
+    localStorage.setItem('neosis_tc_accepted', 'true');
+    setHasAcceptedTC(true);
+    showToast("Welcome to Neosis!", "success");
   };
 
   const handleEndCall = useCallback(() => {
@@ -189,7 +182,6 @@ function NeosisChatInner() {
 
   const connectWebSocket = useCallback((userEmail) => {
     const client = new Client({
-      // CRITICAL FIX 2: Explicitly pass { withCredentials: true } so SockJS sends the session cookie
       webSocketFactory: () => new SockJS(`${BACKEND_URL}/ws`, null, { withCredentials: true }),
       reconnectDelay: 5000, 
       heartbeatIncoming: 4000, 
@@ -265,7 +257,6 @@ function NeosisChatInner() {
         const userRes = await api.get('/api/users/me');
         if (!isMounted) return;
 
-        // Gracefully handle missing auth and redirect to your login page
         if (!userRes.data || !userRes.data.email) {
           window.location.href = '/login'; 
           return;
@@ -276,7 +267,6 @@ function NeosisChatInner() {
         fetchSidebarData();
       } catch (err) { 
         console.error("Auth error", err);
-        // If API throws 401/403 Unauthorized, safely redirect
         if (!isMounted) return;
         window.location.href = '/login'; 
       }
@@ -487,9 +477,10 @@ function NeosisChatInner() {
         )}
       </AnimatePresence>
 
+      {/* Toast Notifications */}
       <AnimatePresence>
         {toast && (
-          <motion.div initial={{ opacity: 0, y: -20, scale: 0.9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -20, scale: 0.9 }} className={`absolute top-8 left-1/2 -translate-x-1/2 z-[60] px-6 py-3 rounded-full text-sm font-semibold shadow-2xl flex items-center gap-2 text-white ${getToastBg(toast.type)}`}>
+          <motion.div initial={{ opacity: 0, y: -20, scale: 0.9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -20, scale: 0.9 }} className={`absolute top-8 left-1/2 -translate-x-1/2 z-[300] px-6 py-3 rounded-full text-sm font-semibold shadow-2xl flex items-center gap-2 text-white ${getToastBg(toast.type)}`}>
             {toast.type === 'success' && <Check size={16} />}
             {toast.type === 'info' && <Info size={16} />}
             {toast.message}
@@ -573,7 +564,7 @@ function NeosisChatInner() {
           </motion.div>
         </div>
 
-        {/* ================= RIGHT SIDEBAR ================ */}
+        {/* ================= RIGHT SIDEBAR ================= */}
         <div className={`${!activeChat ? 'hidden md:flex' : 'flex'} flex-1 flex-col bg-white dark:bg-slate-950 relative`}>
           <div className="absolute inset-0 opacity-[0.03] dark:opacity-[0.02] pointer-events-none chat-wallpaper"></div>
 
