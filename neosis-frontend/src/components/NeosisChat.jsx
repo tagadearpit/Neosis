@@ -189,7 +189,8 @@ function NeosisChatInner() {
 
   const connectWebSocket = useCallback((userEmail) => {
     const client = new Client({
-      webSocketFactory: () => new SockJS(`${BACKEND_URL}/ws`),
+      // CRITICAL FIX 2: Explicitly pass { withCredentials: true } so SockJS sends the session cookie
+      webSocketFactory: () => new SockJS(`${BACKEND_URL}/ws`, null, { withCredentials: true }),
       reconnectDelay: 5000, 
       heartbeatIncoming: 4000, 
       heartbeatOutgoing: 4000,

@@ -27,6 +27,7 @@ spring:
   jpa:
     open-in-view: false 
     hibernate:
+      # NOTE: Change to 'validate' once you go live in production to prevent accidental data loss
       ddl-auto: update 
     show-sql: true    
     properties:
