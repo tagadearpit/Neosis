@@ -573,7 +573,7 @@ function NeosisChatInner() {
           </motion.div>
         </div>
 
-        {/* ================= RIGHT SIDEBAR ================= */}
+        {/* ================= RIGHT SIDEBAR ================ */}
         <div className={`${!activeChat ? 'hidden md:flex' : 'flex'} flex-1 flex-col bg-white dark:bg-slate-950 relative`}>
           <div className="absolute inset-0 opacity-[0.03] dark:opacity-[0.02] pointer-events-none chat-wallpaper"></div>
 

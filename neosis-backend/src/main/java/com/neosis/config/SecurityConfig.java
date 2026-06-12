@@ -15,6 +15,10 @@ import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.web.cors.CorsConfiguration;
 
+// Required for mobile PWA cookie fix
+import org.springframework.security.oauth2.client.web.AuthorizationRequestRepository;
+import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
+
 import java.util.List;
 
 @Configuration
@@ -27,38 +31,52 @@ public class SecurityConfig {
     @Value("${app.frontend.url:https://neosis-static-site.onrender.com}")
     private String frontendUrl;
 
+    // INJECT THE COOKIE REPOSITORY FOR MOBILE PWA LOGIN
+    @Autowired
+    private HttpCookieOAuth2AuthorizationRequestRepository cookieAuthorizationRequestRepository;
+
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
             .cors(cors -> cors.configurationSource(request -> {
                 CorsConfiguration config = new CorsConfiguration();
                 
+                // Clean the frontend URL just in case it has a trailing slash
                 String cleanFrontendUrl = frontendUrl.endsWith("/") ? 
                     frontendUrl.substring(0, frontendUrl.length() - 1) : frontendUrl;
 
+                // Explicitly define the allowed origins. NO WILDCARDS ALLOWED here!
                 config.setAllowedOrigins(List.of("http://localhost:5173", cleanFrontendUrl)); 
                 config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
                 
-                // CRITICAL FIX: Explicitly allow common headers instead of a wildcard (*)
+                // Explicitly allow common headers instead of a wildcard (*)
                 config.setAllowedHeaders(List.of("Authorization", "Cache-Control", "Content-Type", "X-XSRF-TOKEN")); 
                 
-                // CRITICAL FIX: This allows the React frontend to see the JSESSIONID cookie
+                // This allows the React frontend to see the JSESSIONID cookie
                 config.setExposedHeaders(List.of("Set-Cookie")); 
                 
+                // Required for cross-origin session cookies
                 config.setAllowCredentials(true); 
                 
                 return config;
             }))
+            // Enable CSRF but expose token to React and ignore OAuth paths
             .csrf(csrf -> csrf
                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                 .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
+                // CRITICAL FIX 1: Ignored /ws/** so WebSockets can connect without CSRF blocking
                 .ignoringRequestMatchers("/login/**", "/oauth2/**", "/ws/**") 
             )
             .authorizeHttpRequests(auth -> auth
+                // Added /api/users/me to prevent 302 redirect loops during frontend auth checks
                 .requestMatchers("/", "/login", "/ws/**", "/api/users/me").permitAll() 
                 .anyRequest().authenticated()
             )
             .oauth2Login(oauth2 -> oauth2
+                // RE-APPLIED MOBILE PWA FIX: Override default session storage
+                .authorizationEndpoint(authEndpoint -> authEndpoint
+                    .authorizationRequestRepository(cookieAuthorizationRequestRepository)
+                )
                 .successHandler((request, response, authentication) -> {
                     
                     OAuth2User oAuth2User = (OAuth2User) authentication.getPrincipal();
