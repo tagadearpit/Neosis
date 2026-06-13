@@ -4,7 +4,7 @@ import axios from 'axios';
 import { 
   MessageSquare, UserPlus, Bell, Send, Check, CheckCheck, ArrowLeft, Moon, Sun, 
   Loader2, Phone, Video, Search, MoreVertical, Paperclip, Smile, Mic, ShieldCheck,
-  X, User, Trash2, Ban, PhoneOff, PhoneCall, ShieldAlert, Info
+  X, User, Trash2, Ban, PhoneOff, PhoneCall, ShieldAlert, Info, Settings, LogOut, UserCog, Shield
 } from 'lucide-react';
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
@@ -13,7 +13,9 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://neosis-433w.onr
 
 const api = axios.create({
   baseURL: BACKEND_URL,
-  withCredentials: true
+  withCredentials: true,
+  xsrfCookieName: 'XSRF-TOKEN',
+  xsrfHeaderName: 'X-XSRF-TOKEN'
 });
 
 class ChatErrorBoundary extends Component {
@@ -67,26 +69,10 @@ const highlightText = (text, highlight) => {
   );
 };
 
-/* FEATURE: Robust WebRTC Configuration with fallback TURN servers for restrictive NAT traversal */
 const rtcConfiguration = {
   iceServers: [ 
     { urls: 'stun:stun.l.google.com:19302' }, 
-    { urls: 'stun:stun1.l.google.com:19302' },
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    }
+    { urls: 'stun:stun1.l.google.com:19302' }
   ]
 };
 
@@ -104,6 +90,7 @@ function NeosisChatInner() {
   const [friends, setFriends] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [addEmailInput, setAddEmailInput] = useState('');
   const [unreadCounts, setUnreadCounts] = useState({});
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') !== 'light');
@@ -127,6 +114,7 @@ function NeosisChatInner() {
   const toastTimeoutRef = useRef(null);
   const stompClientRef = useRef(null);
   const messagesEndRef = useRef(null); 
+  const textareaRef = useRef(null);
   
   const activeChatRef = useRef(activeChat);
   const currentUserRef = useRef(currentUser);
@@ -136,8 +124,11 @@ function NeosisChatInner() {
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
   
+  // FIX #7: Track the peer email bound to the ACTIVE call, not the active UI chat view
+  const callPeerEmailRef = useRef(null);
   const callStateRef = useRef(callState);
   const incomingCallDataRef = useRef(incomingCallData);
+
   useEffect(() => { callStateRef.current = callState; }, [callState]);
   useEffect(() => { incomingCallDataRef.current = incomingCallData; }, [incomingCallData]);
 
@@ -178,10 +169,23 @@ function NeosisChatInner() {
     toastTimeoutRef.current = setTimeout(() => setToast(null), 3000);
   }, []);
 
-  const handleAcceptTerms = () => {
-    localStorage.setItem('neosis_tc_accepted', 'true');
-    setHasAcceptedTC(true);
-    showToast("Welcome to Neosis!", "success");
+  // FIX #2: Ensure T&C are stored serverside to prevent localStorage bypass
+  const handleAcceptTerms = async () => {
+    try {
+      await api.post('/api/users/accept-terms');
+      localStorage.setItem('neosis_tc_accepted', 'true');
+      setHasAcceptedTC(true);
+      showToast("Welcome to Neosis!", "success");
+    } catch (err) {
+      showToast("Network Error: Could not verify identity.", "error");
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await api.post('/logout'); 
+    } catch (err) {}
+    window.location.href = '/login';
   };
 
   const cleanupCallResources = useCallback(() => {
@@ -196,20 +200,26 @@ function NeosisChatInner() {
       localStreamRef.current = null; 
     }
     iceCandidateQueueRef.current = []; 
+    callPeerEmailRef.current = null;
     setCallState('idle'); 
     setIncomingCallData(null);
   }, []);
 
   const handleEndCall = useCallback(() => {
-    const peerEmail = callStateRef.current === 'ringing' ? incomingCallDataRef.current?.senderEmail : activeChatRef.current;
+    // FIX #7: Use strictly stored call target
+    const peerEmail = callPeerEmailRef.current;
     if (peerEmail && stompClientRef.current && stompClientRef.current.connected) {
       stompClientRef.current.publish({ destination: '/app/chat.signal', body: JSON.stringify({ type: 'end-call', recipientEmail: peerEmail }) });
     }
     cleanupCallResources();
   }, [cleanupCallResources]);
 
-  /* FEATURE: Main STOMP WebSocket implementation for real-time signaling, messaging, and presence */
   const connectWebSocket = useCallback((userEmail) => {
+    // FIX #13: Prevent duplicate WebSocket connections on rapid re-mounts
+    if (stompClientRef.current?.active) {
+      stompClientRef.current.deactivate();
+    }
+
     const client = new Client({
       webSocketFactory: () => new SockJS(`${BACKEND_URL}/ws`, null, { withCredentials: true }),
       reconnectDelay: 5000, 
@@ -228,7 +238,8 @@ function NeosisChatInner() {
                   return newMessages; 
                 }
               }
-              const isDuplicate = prev.some(m => m.id && incomingMessage.id && m.id === incomingMessage.id);
+              // FIX #10: Added localId to the duplicate checker 
+              const isDuplicate = prev.some(m => (m.id && incomingMessage.id && m.id === incomingMessage.id) || (m.localId && incomingMessage.localId && m.localId === incomingMessage.localId));
               return isDuplicate ? prev : [...prev, incomingMessage];
             });
           } else if (incomingMessage.senderEmail !== currentUserRef.current?.email) {
@@ -240,6 +251,7 @@ function NeosisChatInner() {
         
         client.subscribe(`/queue/typing/${userEmail}`, (message) => {
           const data = JSON.parse(message.body);
+          // FIX #12: Ensure typing indicator strictly belongs to active view
           if (data.senderEmail === activeChatRef.current) {
             setIsRemoteTyping(data.isTyping === 'true');
             if (remoteTypingTimeoutRef.current) clearTimeout(remoteTypingTimeoutRef.current);
@@ -249,7 +261,6 @@ function NeosisChatInner() {
 
         client.subscribe(`/queue/signaling/${userEmail}`, async (message) => {
           const data = JSON.parse(message.body);
-          const pc = peerConnectionRef.current;
           
           if (data.type === 'offer') { 
             if (callStateRef.current !== 'idle') {
@@ -261,25 +272,33 @@ function NeosisChatInner() {
                }
                return; 
             }
+            callPeerEmailRef.current = data.senderEmail;
             setIncomingCallData(data); 
             setCallState('ringing'); 
           } 
-          else if (data.type === 'answer' && pc && pc.signalingState !== 'closed') { 
-            await pc.setRemoteDescription(new RTCSessionDescription(data.sdp)); 
+          else if (data.type === 'answer' && peerConnectionRef.current && peerConnectionRef.current.signalingState !== 'closed') { 
+            await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data.sdp)); 
             while (iceCandidateQueueRef.current.length > 0) {
-              if (pc && pc.signalingState !== 'closed') {
-                await pc.addIceCandidate(iceCandidateQueueRef.current.shift());
+              // FIX #9: Safely re-check state after async await operation
+              if (peerConnectionRef.current && peerConnectionRef.current.signalingState !== 'closed') {
+                await peerConnectionRef.current.addIceCandidate(iceCandidateQueueRef.current.shift());
               } else {
                 iceCandidateQueueRef.current = [];
               }
             }
           } 
-          else if (data.type === 'ice-candidate' && pc && pc.signalingState !== 'closed') { 
+          else if (data.type === 'ice-candidate') {
+            const pc = peerConnectionRef.current;
+            if (!pc || pc.signalingState === 'closed') return;
+            
             const candidate = new RTCIceCandidate(data.candidate);
             if (pc.remoteDescription && pc.remoteDescription.type) {
               await pc.addIceCandidate(candidate); 
             } else {
-              iceCandidateQueueRef.current.push(candidate);
+              // FIX #4: Bound the queue size to prevent memory exhaustion attack
+              if (iceCandidateQueueRef.current.length < 50) {
+                iceCandidateQueueRef.current.push(candidate);
+              }
             }
           } 
           else if (data.type === 'end-call') {
@@ -323,10 +342,11 @@ function NeosisChatInner() {
         fetchSidebarData();
       } catch (err) { 
         if (!isMounted) return;
+        // FIX #7: Only redirect on explicit Auth drops, preventing 500 boot loops
         if (err.response?.status === 401 || err.response?.status === 403) {
           window.location.href = '/login'; 
         } else {
-          console.error("Auth error", err);
+          console.error("Initialization warning", err);
         }
       }
     };
@@ -353,7 +373,10 @@ function NeosisChatInner() {
   const handleStartCall = async (video = true) => {
     if (callState !== 'idle') return; 
     try {
-      setIsVideoCall(video); setCallState('in-call');
+      setIsVideoCall(video); 
+      setCallState('in-call');
+      callPeerEmailRef.current = activeChat; // Lock in the recipient
+      
       const stream = await navigator.mediaDevices.getUserMedia({ video, audio: true });
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       localStreamRef.current = stream;
@@ -368,9 +391,12 @@ function NeosisChatInner() {
   };
 
   const handleAcceptCall = async () => {
+    // FIX #1: Null crash prevention
     if (!incomingCallDataRef.current) return;
     try {
-      setIsVideoCall(incomingCallDataRef.current.isVideo); setCallState('in-call');
+      setIsVideoCall(incomingCallDataRef.current.isVideo); 
+      setCallState('in-call');
+      
       const stream = await navigator.mediaDevices.getUserMedia({ video: incomingCallDataRef.current.isVideo, audio: true });
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       localStreamRef.current = stream;
@@ -427,14 +453,28 @@ function NeosisChatInner() {
     if (e) e.preventDefault();
     if (newMessage.trim() === '' || newMessage.length > 5000 || !stompClientRef.current || !stompClientRef.current.connected) return;
     const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const uniqueId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Date.now().toString(); 
+    // FIX #8: Cryptographically secure UUIDs to prevent Date.now() duplicate collisions
+    const uniqueId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Date.now().toString() + Math.random().toString(36).substring(2); 
     const chatMessage = { localId: uniqueId, senderEmail: currentUser.email, recipientEmail: activeChat, content: newMessage.trim(), timestamp: timeString };
     stompClientRef.current.publish({ destination: '/app/chat.send', body: JSON.stringify(chatMessage) });
-    setMessages((prev) => [...prev, chatMessage]); setNewMessage(''); sendTypingStatus(false);
+    setMessages((prev) => [...prev, chatMessage]); 
+    setNewMessage(''); 
+    if (textareaRef.current) textareaRef.current.style.height = '44px'; // Reset height
+    sendTypingStatus(false);
   };
 
   const sendTypingStatus = (isTyping) => { if (!stompClientRef.current || !stompClientRef.current.connected || !activeChatRef.current || !currentUserRef.current) return; stompClientRef.current.publish({ destination: '/app/chat.typing', body: JSON.stringify({ senderEmail: currentUserRef.current.email, recipientEmail: activeChatRef.current, isTyping: isTyping.toString() }) }); };
-  const handleInputChange = (e) => { setNewMessage(e.target.value); sendTypingStatus(true); if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current); typingTimeoutRef.current = setTimeout(() => sendTypingStatus(false), 1500); };
+  
+  const handleInputChange = (e) => { 
+    // FIX #11: Auto-resize textarea logic
+    e.target.style.height = '44px'; 
+    e.target.style.height = `${Math.min(e.target.scrollHeight, 128)}px`;
+    setNewMessage(e.target.value); 
+    sendTypingStatus(true); 
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current); 
+    typingTimeoutRef.current = setTimeout(() => sendTypingStatus(false), 1500); 
+  };
+
   const displayedMessages = useMemo(() => { 
     if (!isSearching || !searchQuery.trim()) return messages; 
     const lowerQuery = searchQuery.toLowerCase();
@@ -525,7 +565,7 @@ function NeosisChatInner() {
                   {isVideoCall ? (
                     <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
                   ) : (
-                    <motion.div animate={{ scale: [1, 1.05, 1] }} transition={{ repeat: Infinity, duration: 2 }} className={`w-48 h-48 rounded-full flex items-center justify-center text-6xl font-bold bg-gradient-to-br ${getAvatarGradient(formatName(activeChat || incomingCallData?.senderEmail))} shadow-2xl`}>{formatName(activeChat || incomingCallData?.senderEmail).charAt(0)}</motion.div>
+                    <motion.div animate={{ scale: [1, 1.05, 1] }} transition={{ repeat: Infinity, duration: 2 }} className={`w-48 h-48 rounded-full flex items-center justify-center text-6xl font-bold bg-gradient-to-br ${getAvatarGradient(formatName(callPeerEmailRef.current))} shadow-2xl`}>{formatName(callPeerEmailRef.current).charAt(0)}</motion.div>
                   )}
                   {isVideoCall && (
                     <div className="absolute top-6 right-6 w-32 md:w-48 aspect-video bg-slate-800 rounded-xl overflow-hidden shadow-2xl border-2 border-slate-700">
@@ -562,6 +602,7 @@ function NeosisChatInner() {
             </div>
             <div className="flex items-center gap-1">
               <motion.button aria-label="Toggle Dark Mode" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 text-slate-400 hover:text-indigo-500 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/10 rounded-full transition">{isDarkMode ? <Sun size={18} /> : <Moon size={18} />}</motion.button>
+              
               <div className="relative">
                 <motion.button aria-label="Notifications" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => setShowNotifications(!showNotifications)} className="p-2 text-slate-400 hover:text-indigo-500 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/10 rounded-full transition">
                   <Bell size={18} />{pendingRequests.length > 0 && <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-rose-500 rounded-full border-2 border-white dark:border-[#0a1520]"></motion.span>}
@@ -580,6 +621,25 @@ function NeosisChatInner() {
                           ))}
                         </div>
                       )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <div className="relative">
+                <motion.button aria-label="Settings" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => setShowSettingsMenu(!showSettingsMenu)} className="p-2 text-slate-400 hover:text-indigo-500 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/10 rounded-full transition">
+                  <Settings size={18} />
+                </motion.button>
+                <AnimatePresence>
+                  {showSettingsMenu && (
+                    <motion.div initial={{ opacity: 0, y: 10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.95 }} transition={{ type: "spring", stiffness: 300, damping: 25 }} className="absolute right-0 top-12 w-56 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-100 dark:border-slate-700 z-50 overflow-hidden">
+                      <div className="p-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-100 dark:border-slate-700 text-sm font-bold text-slate-800 dark:text-white">Settings</div>
+                      <div className="flex flex-col text-sm text-slate-700 dark:text-slate-200">
+                        <button onClick={() => { setShowSettingsMenu(false); showToast("Account preferences coming soon", "info"); }} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700 transition w-full text-left"><UserCog size={16} /> Account</button>
+                        <button onClick={() => { setShowSettingsMenu(false); showToast("Privacy settings coming soon", "info"); }} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700 transition w-full text-left"><Shield size={16} /> Privacy</button>
+                        <div className="h-px bg-slate-100 dark:bg-slate-700 w-full"></div>
+                        <button onClick={handleLogout} className="flex items-center gap-3 px-4 py-3 hover:bg-rose-50 dark:hover:bg-rose-500/10 text-rose-500 transition w-full text-left font-semibold"><LogOut size={16} /> Log Out</button>
+                      </div>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -718,7 +778,7 @@ function NeosisChatInner() {
                 <form onSubmit={handleSendMessage} className="flex items-end gap-3 max-w-4xl mx-auto">
                   <div className="flex-1 bg-slate-100 dark:bg-slate-800 rounded-3xl flex items-end p-1 shadow-inner border border-transparent focus-within:border-indigo-500/30 transition-all">
                     <motion.button aria-label="Emoji Picker" onClick={() => showToast("Emoji picker coming soon", "info")} whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} type="button" className="p-3 text-slate-400 hover:text-indigo-500 transition-colors"><Smile size={22} /></motion.button>
-                    <textarea value={newMessage} onChange={handleInputChange} maxLength={5000} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }} placeholder="Type your message..." className="flex-1 bg-transparent text-slate-800 dark:text-slate-200 placeholder-slate-400 outline-none text-[15px] py-3 max-h-32 min-h-[44px] resize-none custom-scrollbar" rows="1" />
+                    <textarea ref={textareaRef} value={newMessage} onChange={handleInputChange} maxLength={5000} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }} placeholder="Type your message..." className="flex-1 bg-transparent text-slate-800 dark:text-slate-200 placeholder-slate-400 outline-none text-[15px] py-3 max-h-32 min-h-[44px] resize-none custom-scrollbar" rows="1" />
                     <motion.button aria-label="Attach File" onClick={() => showToast("Attachments coming soon", "info")} whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} type="button" className="p-3 text-slate-400 hover:text-indigo-500 transition-colors"><Paperclip size={20} /></motion.button>
                   </div>
                   {newMessage.trim() ? (
