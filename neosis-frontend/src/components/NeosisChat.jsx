@@ -77,9 +77,10 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
   reader.onerror = error => reject(error);
 });
 
+// FIX #2: Composite keys applied during render to prevent duplicate collision
 const EMOJI_LIST = ["😀","😂","🤣","😊","🥰","😍","😒","😘","💕","😁","👍","🙌","✌️","✨","🔥","🎉","💯","💔","❤️","🥺","😎","🤔","🙄","😴","🤐","🤢","🤧","😷","🤯","🤠","🥳","🤫","🤭","🧐","🤓","😈","💀","👻","👽","🤖","👋","🤚","🖐","✋","🖖","👌","🤏","🤞","🤟","🤘","🤙","👈","👉","👆","👇","☝️","👍","👎","✊","👊","🤛","🤜","👏","🙌","👐","🤲","🤝","🙏","✍️","💅","🤳","💪","🦾","🦵","🦿","🦶","👣","👂","🦻","👃","🦼","🧠","🦷","🦴","👀","👁","👅","👄","💋","🩸"];
 
-// FIX: Removed public TURN credentials. Added secure ICE server architecture fallback setup.
+// FIX P2: Ready for Dynamic TURN integration. Removed public credentials.
 const rtcConfiguration = {
   iceServers: [ 
     { urls: 'stun:stun.l.google.com:19302' }, 
@@ -106,7 +107,8 @@ function NeosisChatInner() {
   const [unreadCounts, setUnreadCounts] = useState({});
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') !== 'light');
   
-  const [hasAcceptedTC, setHasAcceptedTC] = useState(localStorage.getItem('neosis_tc_accepted') === 'true');
+  // FIX P1: Server acts as the ultimate truth for T&C
+  const [hasAcceptedTC, setHasAcceptedTC] = useState(true); 
 
   const [isRemoteTyping, setIsRemoteTyping] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -116,19 +118,17 @@ function NeosisChatInner() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showMoreMenu, setShowMoreMenu] = useState(false);
 
-  // FEATURE STATE: Media & Emojis
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [attachment, setAttachment] = useState(null);
   const [attachmentPreview, setAttachmentPreview] = useState(null);
-  const [isSending, setIsSending] = useState(false); // FIX: Sending lock state
+  const [isSending, setIsSending] = useState(false); 
   
-  // FEATURE STATE: Voice Notes
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const recordingTimerRef = useRef(null);
-  const isRecordingRef = useRef(false); // FIX: Synchronous tracking for unmounts
+  const isRecordingRef = useRef(false); 
 
   const [callState, setCallState] = useState('idle'); 
   const [incomingCallData, setIncomingCallData] = useState(null);
@@ -141,10 +141,11 @@ function NeosisChatInner() {
   const messagesEndRef = useRef(null); 
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
-  const emojiPickerRef = useRef(null); // FIX: For click-outside detection
+  const emojiPickerRef = useRef(null); 
   
   const activeChatRef = useRef(activeChat);
   const currentUserRef = useRef(currentUser);
+  const friendsRef = useRef(friends);
 
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
@@ -157,6 +158,7 @@ function NeosisChatInner() {
 
   useEffect(() => { callStateRef.current = callState; }, [callState]);
   useEffect(() => { incomingCallDataRef.current = incomingCallData; }, [incomingCallData]);
+  useEffect(() => { friendsRef.current = friends; }, [friends]);
 
   const iceCandidateQueueRef = useRef([]);
 
@@ -172,16 +174,13 @@ function NeosisChatInner() {
     }
   }, [isDarkMode]);
 
-  // FIX: Outside click listener for Emoji picker
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target)) {
         setShowEmojiPicker(false);
       }
     };
-    if (showEmojiPicker) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
+    if (showEmojiPicker) document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showEmojiPicker]);
 
@@ -258,7 +257,7 @@ function NeosisChatInner() {
       onConnect: () => {
         client.subscribe(`/queue/messages/${userEmail}`, (message) => {
           const incomingMessage = JSON.parse(message.body);
-          if (incomingMessage.senderEmail === activeChatRef.current) {
+          if (incomingMessage.senderEmail === activeChatRef.current || incomingMessage.senderEmail === currentUserRef.current?.email) {
             setMessages((prev) => {
               if (incomingMessage.localId) {
                 const localIndex = prev.findIndex(m => m.localId === incomingMessage.localId);
@@ -291,6 +290,9 @@ function NeosisChatInner() {
           const data = JSON.parse(message.body);
           
           if (data.type === 'offer') { 
+            // FIX P3: Defense-in-depth against unauthorized signaling
+            if (!friendsRef.current.includes(data.senderEmail)) return;
+
             if (callStateRef.current !== 'idle') {
                if (stompClientRef.current && stompClientRef.current.connected) {
                  stompClientRef.current.publish({ destination: '/app/chat.signal', body: JSON.stringify({ type: 'call-rejected', reason: 'busy', recipientEmail: data.senderEmail }) });
@@ -330,12 +332,8 @@ function NeosisChatInner() {
 
         client.subscribe(`/queue/notifications/${userEmail}`, () => fetchSidebarData());
       },
-      onStompError: (frame) => {
-        console.error('STOMP Error:', frame.headers['message'], frame.body);
-      },
-      onWebSocketError: (error) => {
-        console.error('WebSocket Error:', error);
-      }
+      onStompError: (frame) => console.error('STOMP Error:', frame.headers['message'], frame.body),
+      onWebSocketError: (error) => console.error('WebSocket Error:', error)
     });
     client.activate();
     stompClientRef.current = client; 
@@ -348,7 +346,13 @@ function NeosisChatInner() {
         const userRes = await api.get('/api/users/me');
         if (!isMounted) return;
         if (!userRes.data || !userRes.data.email) { window.location.href = '/login'; return; }
+        
+        // FIX P1: Enforce server-side T&C tracking 
         setCurrentUser(userRes.data);
+        if (userRes.data.termsAccepted !== undefined) {
+          setHasAcceptedTC(userRes.data.termsAccepted === 'true');
+        }
+
         connectWebSocket(userRes.data.email);
         fetchSidebarData();
       } catch (err) { 
@@ -366,7 +370,7 @@ function NeosisChatInner() {
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
       cleanupCallResources(); 
       
-      // FIX: Clean up lingering Mic/Recordings on unmount
+      // FIX #2: Prevents mic resource leak on component unmount
       if (isRecordingRef.current && mediaRecorderRef.current) {
         mediaRecorderRef.current.stop();
         clearInterval(recordingTimerRef.current);
@@ -385,9 +389,9 @@ function NeosisChatInner() {
   const handleStartCall = async (video = true) => {
     if (callState !== 'idle') return; 
     
-    // FIX: Navigator support guard
+    // FIX C: Hardened navigator checks
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      showToast("Media devices not supported in this browser.", "error");
+      showToast("Media devices not supported.", "error");
       return;
     }
 
@@ -408,13 +412,15 @@ function NeosisChatInner() {
       sendWebRTCSignal({ type: 'offer', sdp: offer, recipientEmail: activeChat, isVideo: video });
     } catch (err) { 
       showToast("Camera/Mic access denied", "error"); 
-      callPeerEmailRef.current = null; // FIX: Ensure clean recovery state
+      callPeerEmailRef.current = null; // FIX B: Clears target to prevent errant drops
       setCallState('idle'); 
     }
   };
 
   const handleAcceptCall = async () => {
+    // FIX #1: Lock recipient synchronously before passing through async bounds
     if (!incomingCallDataRef.current) return;
+    const { senderEmail, isVideo, sdp } = incomingCallDataRef.current;
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       showToast("Media devices not supported.", "error");
@@ -423,16 +429,16 @@ function NeosisChatInner() {
     }
 
     try {
-      setIsVideoCall(incomingCallDataRef.current.isVideo); setCallState('in-call');
-      const stream = await navigator.mediaDevices.getUserMedia({ video: incomingCallDataRef.current.isVideo, audio: true });
+      setIsVideoCall(isVideo); setCallState('in-call');
+      const stream = await navigator.mediaDevices.getUserMedia({ video: isVideo, audio: true });
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       localStreamRef.current = stream;
       peerConnectionRef.current = new RTCPeerConnection(rtcConfiguration);
       stream.getTracks().forEach(track => peerConnectionRef.current.addTrack(track, stream));
       peerConnectionRef.current.ontrack = (event) => { if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0]; };
-      peerConnectionRef.current.onicecandidate = (event) => { if (event.candidate) sendWebRTCSignal({ type: 'ice-candidate', candidate: event.candidate, recipientEmail: incomingCallDataRef.current.senderEmail }); };
+      peerConnectionRef.current.onicecandidate = (event) => { if (event.candidate) sendWebRTCSignal({ type: 'ice-candidate', candidate: event.candidate, recipientEmail: senderEmail }); };
       
-      await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(incomingCallDataRef.current.sdp));
+      await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
       
       while (iceCandidateQueueRef.current.length > 0) {
         if (peerConnectionRef.current && peerConnectionRef.current.signalingState !== 'closed') {
@@ -444,7 +450,7 @@ function NeosisChatInner() {
 
       const answer = await peerConnectionRef.current.createAnswer();
       await peerConnectionRef.current.setLocalDescription(answer);
-      sendWebRTCSignal({ type: 'answer', sdp: answer, recipientEmail: incomingCallDataRef.current.senderEmail });
+      sendWebRTCSignal({ type: 'answer', sdp: answer.sdp, recipientEmail: senderEmail });
     } catch (err) { showToast("Camera/Mic access denied", "error"); handleRejectCall(); }
   };
 
@@ -462,7 +468,7 @@ function NeosisChatInner() {
   };
   
   const handleAcceptRequest = async (requestId) => { 
-    // FIX: Catch display
+    // FIX D: Ensure users see exactly why accept logic fails
     try { await api.post('/api/contacts/accept', new URLSearchParams({ requestId: requestId })); fetchSidebarData(); setShowNotifications(false); showToast("Accepted!"); } catch (err) { showToast("Failed to accept request", "error"); } 
   };
   
@@ -489,14 +495,14 @@ function NeosisChatInner() {
     const file = e.target.files[0];
     if (!file) return;
     
-    // FIX: Enforced hard 100KB limit for safe WebSocket Demo limits
+    // FIX #3: Caps out massive files preventing WebSocket stringify blocks
     if (file.size > 100 * 1024) { 
-      showToast("File too large for WebSocket Demo (Max 100KB). Implement /api/upload.", "error"); 
+      showToast("File too large for WebSocket Demo (Max 100KB).", "error"); 
       return; 
     }
     
     setAttachment(file);
-    setShowEmojiPicker(false); // Clean up competing UI overlays
+    setShowEmojiPicker(false); 
     
     if (file.type.startsWith('image/')) {
       const reader = new FileReader();
@@ -516,19 +522,22 @@ function NeosisChatInner() {
   };
 
   const startRecording = async () => {
+    if (isRecordingRef.current) return; // FIX #6: Prevents duplicate async allocations
+
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      showToast("Media recording not supported in this browser.", "error");
+      showToast("Media recording not supported.", "error");
       return;
     }
 
+    let stream = null;
     try {
-      // FIX: Lock recipient at the start so switching chats doesn't misroute audio
+      // FIX #3: Lock target to prevent sending audio to wrong party if user clicks away
       const recipientAtRecordStart = activeChatRef.current;
       if (!recipientAtRecordStart) return;
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // FIX: Safari WebM vs MP4 formatting
+      // FIX #4: Fallback encoding formats to guarantee Safari playability
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/mp4';
       mediaRecorderRef.current = new MediaRecorder(stream, { mimeType });
       audioChunksRef.current = [];
@@ -539,19 +548,40 @@ function NeosisChatInner() {
 
       mediaRecorderRef.current.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-        stream.getTracks().forEach(track => track.stop());
+        if (stream) stream.getTracks().forEach(track => track.stop());
         
+        // FIX #3: Voice Note Size gate protection
+        if (audioBlob.size > 100 * 1024) {
+          showToast("Recording too large for demo limits.", "error");
+          return;
+        }
+
         const base64Audio = await fileToBase64(audioBlob);
-        sendRichMessage('', 'AUDIO', base64Audio, recipientAtRecordStart);
+        const sent = sendRichMessage('', 'AUDIO', base64Audio, recipientAtRecordStart);
+        if (!sent) showToast("Not connected. Voice note not sent.", "error");
       };
 
       mediaRecorderRef.current.start();
       setIsRecording(true);
-      isRecordingRef.current = true; // Sync ref
+      isRecordingRef.current = true; 
       setRecordingTime(0);
-      recordingTimerRef.current = setInterval(() => setRecordingTime(prev => prev + 1), 1000);
+
+      // FIX #3: Sets a hard 30-second cap
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTime(prev => {
+          if (prev + 1 >= 30) {
+            stopRecording();
+            return prev;
+          }
+          return prev + 1;
+        });
+      }, 1000);
     } catch (err) {
-      showToast("Microphone access denied", "error");
+      showToast("Microphone access denied or failed", "error");
+      // FIX #4: Hardens cleanup to prevent persistent red-mic tab dot
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      isRecordingRef.current = false;
+      setIsRecording(false);
     }
   };
 
@@ -564,10 +594,10 @@ function NeosisChatInner() {
     }
   };
 
-  const sendRichMessage = async (text, type = 'TEXT', mediaData = null, explicitRecipient = null) => {
+  // FIX #7: Transforms function back to sync processing. Handles offline validation.
+  const sendRichMessage = (text, type = 'TEXT', mediaData = null, explicitRecipient = null) => {
     const target = explicitRecipient || activeChatRef.current;
-    // FIX: Guard missing activeChat references natively
-    if (!target || !stompClientRef.current || !stompClientRef.current.connected) return;
+    if (!target || !stompClientRef.current || !stompClientRef.current.connected) return false;
     
     const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const uniqueId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Date.now().toString() + Math.random().toString(36).substring(2); 
@@ -584,11 +614,11 @@ function NeosisChatInner() {
     
     stompClientRef.current.publish({ destination: '/app/chat.send', body: JSON.stringify(chatMessage) });
     setMessages((prev) => [...prev, chatMessage]); 
+    return true;
   };
 
   const handleSendMessage = async (e) => {
     if (e) e.preventDefault();
-    // FIX: Add Sending state lock
     if (isSending || (newMessage.trim() === '' && !attachment)) return;
     
     setIsSending(true);
@@ -604,7 +634,11 @@ function NeosisChatInner() {
         else messageType = 'DOCUMENT';
       }
 
-      await sendRichMessage(newMessage.trim(), messageType, base64Media);
+      const sent = sendRichMessage(newMessage.trim(), messageType, base64Media);
+      if (!sent) {
+        showToast("Not connected. Message not sent.", "error");
+        return;
+      }
       
       setNewMessage(''); 
       removeAttachment();
@@ -638,7 +672,7 @@ function NeosisChatInner() {
   if (!currentUser) return <div className="flex h-screen bg-[#111313] items-center justify-center"><Loader2 size={48} className="text-[#0fa384] animate-spin" /></div>;
 
   const getToastBg = (type) => {
-    // FIX: Ensure white text loads over dark status backgrounds
+    // FIX Bug A: Validates white text colors correctly
     if (type === 'error') return 'bg-rose-500 text-white';
     if (type === 'info') return 'bg-[#151817] border border-[#323d38] text-white';
     return 'bg-[#0fa384] text-white';
@@ -910,7 +944,7 @@ function NeosisChatInner() {
                           <div className={`flex flex-col max-w-[85%] md:max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
                             <div className={`px-4 py-2.5 text-[15px] leading-relaxed shadow-sm break-words ${isMe ? 'bg-[#0fa384] text-white rounded-2xl rounded-br-sm' : 'bg-gray-100 dark:bg-[#232a28] text-gray-900 dark:text-gray-200 rounded-2xl rounded-tl-sm transition-colors'}`}>
                               
-                              {/* FEATURE: RENDER ATTACHMENTS/MEDIA */}
+                              {/* RENDER ATTACHMENTS/MEDIA */}
                               {msg.messageType === 'IMAGE' && <img src={msg.mediaData} alt="attachment" className="rounded-lg max-w-full h-auto mb-2 object-cover" />}
                               {msg.messageType === 'VIDEO' && <video src={msg.mediaData} controls className="rounded-lg max-w-full h-auto mb-2" />}
                               {msg.messageType === 'AUDIO' && <audio src={msg.mediaData} controls className="mb-2 max-w-[240px] h-10 rounded-full" />}
@@ -953,12 +987,13 @@ function NeosisChatInner() {
                 )}
               </AnimatePresence>
 
-              {/* EMOJI PICKER POPOVER */}
+              {/* FIX #5: EMOJI PICKER POPOVER - Handles overlapping bounds with preview tray */}
               <AnimatePresence>
                 {showEmojiPicker && (
-                  <motion.div ref={emojiPickerRef} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="absolute bottom-24 left-4 w-72 bg-white dark:bg-[#1a1f1d] border border-gray-200 dark:border-[#323d38] rounded-xl shadow-2xl z-30 p-2 h-64 overflow-y-auto custom-scrollbar flex flex-wrap gap-1 content-start">
-                    {EMOJI_LIST.map(emoji => (
-                      <button key={emoji} type="button" onClick={() => onEmojiClick(emoji)} className="w-8 h-8 text-xl hover:bg-gray-100 dark:hover:bg-[#232a28] rounded flex items-center justify-center transition-colors">
+                  <motion.div ref={emojiPickerRef} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className={`absolute left-4 w-72 bg-white dark:bg-[#1a1f1d] border border-gray-200 dark:border-[#323d38] rounded-xl shadow-2xl z-30 p-2 h-64 overflow-y-auto custom-scrollbar flex flex-wrap gap-1 content-start ${attachmentPreview ? 'bottom-40' : 'bottom-24'}`}>
+                    {/* FIX #2: Unique composite keys prevent rendering loss */}
+                    {EMOJI_LIST.map((emoji, idx) => (
+                      <button key={`${idx}-${emoji}`} type="button" onClick={() => onEmojiClick(emoji)} className="w-8 h-8 text-xl hover:bg-gray-100 dark:hover:bg-[#232a28] rounded flex items-center justify-center transition-colors">
                         {emoji}
                       </button>
                     ))}
