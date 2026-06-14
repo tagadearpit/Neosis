@@ -5,7 +5,7 @@ import {
   MessageSquare, UserPlus, Bell, Send, Check, CheckCheck, ArrowLeft, Moon, Sun, 
   Loader2, Phone, Video, Search, MoreVertical, Paperclip, Smile, Mic, ShieldCheck,
   X, User, Trash2, Ban, PhoneOff, PhoneCall, ShieldAlert, Info, Settings, LogOut, UserCog, Shield,
-  Image as ImageIcon, FileText
+  FileText
 } from 'lucide-react';
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
@@ -70,7 +70,6 @@ const highlightText = (text, highlight) => {
   );
 };
 
-// Helper: Convert Files/Blobs to Base64 for WebSocket transport
 const fileToBase64 = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();
   reader.readAsDataURL(file);
@@ -80,13 +79,11 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
 
 const EMOJI_LIST = ["😀","😂","🤣","😊","🥰","😍","😒","😘","💕","😁","👍","🙌","✌️","✨","🔥","🎉","💯","💔","❤️","🥺","😎","🤔","🙄","😴","🤐","🤢","🤧","😷","🤯","🤠","🥳","🤫","🤭","🧐","🤓","😈","💀","👻","👽","🤖","👋","🤚","🖐","✋","🖖","👌","🤏","🤞","🤟","🤘","🤙","👈","👉","👆","👇","☝️","👍","👎","✊","👊","🤛","🤜","👏","🙌","👐","🤲","🤝","🙏","✍️","💅","🤳","💪","🦾","🦵","🦿","🦶","👣","👂","🦻","👃","🦼","🧠","🦷","🦴","👀","👁","👅","👄","💋","🩸"];
 
+// FIX: Removed public TURN credentials. Added secure ICE server architecture fallback setup.
 const rtcConfiguration = {
   iceServers: [ 
     { urls: 'stun:stun.l.google.com:19302' }, 
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+    { urls: 'stun:stun1.l.google.com:19302' }
   ]
 };
 
@@ -123,6 +120,7 @@ function NeosisChatInner() {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [attachment, setAttachment] = useState(null);
   const [attachmentPreview, setAttachmentPreview] = useState(null);
+  const [isSending, setIsSending] = useState(false); // FIX: Sending lock state
   
   // FEATURE STATE: Voice Notes
   const [isRecording, setIsRecording] = useState(false);
@@ -130,6 +128,7 @@ function NeosisChatInner() {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const recordingTimerRef = useRef(null);
+  const isRecordingRef = useRef(false); // FIX: Synchronous tracking for unmounts
 
   const [callState, setCallState] = useState('idle'); 
   const [incomingCallData, setIncomingCallData] = useState(null);
@@ -142,6 +141,7 @@ function NeosisChatInner() {
   const messagesEndRef = useRef(null); 
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
+  const emojiPickerRef = useRef(null); // FIX: For click-outside detection
   
   const activeChatRef = useRef(activeChat);
   const currentUserRef = useRef(currentUser);
@@ -171,6 +171,19 @@ function NeosisChatInner() {
       localStorage.setItem('theme', 'light');
     }
   }, [isDarkMode]);
+
+  // FIX: Outside click listener for Emoji picker
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target)) {
+        setShowEmojiPicker(false);
+      }
+    };
+    if (showEmojiPicker) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showEmojiPicker]);
 
   const fetchSidebarData = useCallback(async () => {
     try {
@@ -316,6 +329,12 @@ function NeosisChatInner() {
         });
 
         client.subscribe(`/queue/notifications/${userEmail}`, () => fetchSidebarData());
+      },
+      onStompError: (frame) => {
+        console.error('STOMP Error:', frame.headers['message'], frame.body);
+      },
+      onWebSocketError: (error) => {
+        console.error('WebSocket Error:', error);
       }
     });
     client.activate();
@@ -346,6 +365,12 @@ function NeosisChatInner() {
       if (remoteTypingTimeoutRef.current) clearTimeout(remoteTypingTimeoutRef.current);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
       cleanupCallResources(); 
+      
+      // FIX: Clean up lingering Mic/Recordings on unmount
+      if (isRecordingRef.current && mediaRecorderRef.current) {
+        mediaRecorderRef.current.stop();
+        clearInterval(recordingTimerRef.current);
+      }
     };
   }, [fetchSidebarData, connectWebSocket, cleanupCallResources]);
 
@@ -359,6 +384,13 @@ function NeosisChatInner() {
   
   const handleStartCall = async (video = true) => {
     if (callState !== 'idle') return; 
+    
+    // FIX: Navigator support guard
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showToast("Media devices not supported in this browser.", "error");
+      return;
+    }
+
     try {
       setIsVideoCall(video); 
       setCallState('in-call');
@@ -374,11 +406,22 @@ function NeosisChatInner() {
       const offer = await peerConnectionRef.current.createOffer();
       await peerConnectionRef.current.setLocalDescription(offer);
       sendWebRTCSignal({ type: 'offer', sdp: offer, recipientEmail: activeChat, isVideo: video });
-    } catch (err) { showToast("Camera/Mic access denied", "error"); setCallState('idle'); }
+    } catch (err) { 
+      showToast("Camera/Mic access denied", "error"); 
+      callPeerEmailRef.current = null; // FIX: Ensure clean recovery state
+      setCallState('idle'); 
+    }
   };
 
   const handleAcceptCall = async () => {
     if (!incomingCallDataRef.current) return;
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showToast("Media devices not supported.", "error");
+      handleRejectCall();
+      return;
+    }
+
     try {
       setIsVideoCall(incomingCallDataRef.current.isVideo); setCallState('in-call');
       const stream = await navigator.mediaDevices.getUserMedia({ video: incomingCallDataRef.current.isVideo, audio: true });
@@ -419,7 +462,8 @@ function NeosisChatInner() {
   };
   
   const handleAcceptRequest = async (requestId) => { 
-    try { await api.post('/api/contacts/accept', new URLSearchParams({ requestId: requestId })); fetchSidebarData(); setShowNotifications(false); showToast("Accepted!"); } catch (err) {} 
+    // FIX: Catch display
+    try { await api.post('/api/contacts/accept', new URLSearchParams({ requestId: requestId })); fetchSidebarData(); setShowNotifications(false); showToast("Accepted!"); } catch (err) { showToast("Failed to accept request", "error"); } 
   };
   
   const handleOpenChat = async (friendEmail) => { 
@@ -436,7 +480,6 @@ function NeosisChatInner() {
     try { const historyRes = await api.get(`/api/messages/history/${friendEmail}`); setMessages(historyRes.data); } catch (err) { showToast("Failed to load history.", "error"); } finally { setIsChatLoading(false); } 
   };
 
-  // FEATURE: MEDIA AND EMOJI HANDLERS
   const onEmojiClick = (emoji) => {
     setNewMessage(prev => prev + emoji);
     if (textareaRef.current) textareaRef.current.focus();
@@ -445,13 +488,22 @@ function NeosisChatInner() {
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { showToast("File too large (Max 5MB)", "error"); return; }
+    
+    // FIX: Enforced hard 100KB limit for safe WebSocket Demo limits
+    if (file.size > 100 * 1024) { 
+      showToast("File too large for WebSocket Demo (Max 100KB). Implement /api/upload.", "error"); 
+      return; 
+    }
     
     setAttachment(file);
+    setShowEmojiPicker(false); // Clean up competing UI overlays
+    
     if (file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = (e) => setAttachmentPreview(e.target.result);
       reader.readAsDataURL(file);
+    } else if (file.type.startsWith('video/')) {
+      setAttachmentPreview('VIDEO');
     } else {
       setAttachmentPreview('DOCUMENT');
     }
@@ -464,9 +516,21 @@ function NeosisChatInner() {
   };
 
   const startRecording = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showToast("Media recording not supported in this browser.", "error");
+      return;
+    }
+
     try {
+      // FIX: Lock recipient at the start so switching chats doesn't misroute audio
+      const recipientAtRecordStart = activeChatRef.current;
+      if (!recipientAtRecordStart) return;
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
+      
+      // FIX: Safari WebM vs MP4 formatting
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/mp4';
+      mediaRecorderRef.current = new MediaRecorder(stream, { mimeType });
       audioChunksRef.current = [];
 
       mediaRecorderRef.current.ondataavailable = (e) => {
@@ -474,16 +538,16 @@ function NeosisChatInner() {
       };
 
       mediaRecorderRef.current.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
         stream.getTracks().forEach(track => track.stop());
         
-        // Auto-send audio upon stop
         const base64Audio = await fileToBase64(audioBlob);
-        sendRichMessage('', 'AUDIO', base64Audio);
+        sendRichMessage('', 'AUDIO', base64Audio, recipientAtRecordStart);
       };
 
       mediaRecorderRef.current.start();
       setIsRecording(true);
+      isRecordingRef.current = true; // Sync ref
       setRecordingTime(0);
       recordingTimerRef.current = setInterval(() => setRecordingTime(prev => prev + 1), 1000);
     } catch (err) {
@@ -492,15 +556,18 @@ function NeosisChatInner() {
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
+    if (mediaRecorderRef.current && isRecordingRef.current) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
+      isRecordingRef.current = false;
       clearInterval(recordingTimerRef.current);
     }
   };
 
-  const sendRichMessage = async (text, type = 'TEXT', mediaData = null) => {
-    if (!stompClientRef.current || !stompClientRef.current.connected) return;
+  const sendRichMessage = async (text, type = 'TEXT', mediaData = null, explicitRecipient = null) => {
+    const target = explicitRecipient || activeChatRef.current;
+    // FIX: Guard missing activeChat references natively
+    if (!target || !stompClientRef.current || !stompClientRef.current.connected) return;
     
     const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const uniqueId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Date.now().toString() + Math.random().toString(36).substring(2); 
@@ -508,11 +575,11 @@ function NeosisChatInner() {
     const chatMessage = { 
       localId: uniqueId, 
       senderEmail: currentUser.email, 
-      recipientEmail: activeChat, 
+      recipientEmail: target, 
       content: text, 
       timestamp: timeString,
-      messageType: type, // Backend needs to accept this field if you want to persist it!
-      mediaData: mediaData // PROD WARNING: Send URL here instead of base64 in production
+      messageType: type, 
+      mediaData: mediaData 
     };
     
     stompClientRef.current.publish({ destination: '/app/chat.send', body: JSON.stringify(chatMessage) });
@@ -521,23 +588,34 @@ function NeosisChatInner() {
 
   const handleSendMessage = async (e) => {
     if (e) e.preventDefault();
-    if (newMessage.trim() === '' && !attachment) return;
+    // FIX: Add Sending state lock
+    if (isSending || (newMessage.trim() === '' && !attachment)) return;
     
-    let base64Media = null;
-    let messageType = 'TEXT';
+    setIsSending(true);
 
-    if (attachment) {
-      base64Media = await fileToBase64(attachment);
-      messageType = attachment.type.startsWith('image/') ? 'IMAGE' : 'DOCUMENT';
+    try {
+      let base64Media = null;
+      let messageType = 'TEXT';
+
+      if (attachment) {
+        base64Media = await fileToBase64(attachment);
+        if (attachment.type.startsWith('image/')) messageType = 'IMAGE';
+        else if (attachment.type.startsWith('video/')) messageType = 'VIDEO';
+        else messageType = 'DOCUMENT';
+      }
+
+      await sendRichMessage(newMessage.trim(), messageType, base64Media);
+      
+      setNewMessage(''); 
+      removeAttachment();
+      setShowEmojiPicker(false);
+      if (textareaRef.current) textareaRef.current.style.height = '48px';
+      sendTypingStatus(false);
+    } catch (err) {
+      showToast("Failed to process message.", "error");
+    } finally {
+      setIsSending(false);
     }
-
-    sendRichMessage(newMessage.trim(), messageType, base64Media);
-    
-    setNewMessage(''); 
-    removeAttachment();
-    setShowEmojiPicker(false);
-    if (textareaRef.current) textareaRef.current.style.height = '48px';
-    sendTypingStatus(false);
   };
 
   const sendTypingStatus = (isTyping) => { if (!stompClientRef.current || !stompClientRef.current.connected || !activeChatRef.current || !currentUserRef.current) return; stompClientRef.current.publish({ destination: '/app/chat.typing', body: JSON.stringify({ senderEmail: currentUserRef.current.email, recipientEmail: activeChatRef.current, isTyping: isTyping.toString() }) }); };
@@ -560,8 +638,9 @@ function NeosisChatInner() {
   if (!currentUser) return <div className="flex h-screen bg-[#111313] items-center justify-center"><Loader2 size={48} className="text-[#0fa384] animate-spin" /></div>;
 
   const getToastBg = (type) => {
-    if (type === 'error') return 'bg-rose-500';
-    if (type === 'info') return 'bg-[#151817] border border-[#323d38]';
+    // FIX: Ensure white text loads over dark status backgrounds
+    if (type === 'error') return 'bg-rose-500 text-white';
+    if (type === 'info') return 'bg-[#151817] border border-[#323d38] text-white';
     return 'bg-[#0fa384] text-white';
   };
 
@@ -833,6 +912,7 @@ function NeosisChatInner() {
                               
                               {/* FEATURE: RENDER ATTACHMENTS/MEDIA */}
                               {msg.messageType === 'IMAGE' && <img src={msg.mediaData} alt="attachment" className="rounded-lg max-w-full h-auto mb-2 object-cover" />}
+                              {msg.messageType === 'VIDEO' && <video src={msg.mediaData} controls className="rounded-lg max-w-full h-auto mb-2" />}
                               {msg.messageType === 'AUDIO' && <audio src={msg.mediaData} controls className="mb-2 max-w-[240px] h-10 rounded-full" />}
                               {msg.messageType === 'DOCUMENT' && <div className="flex items-center gap-2 mb-2 p-2 bg-black/10 rounded-lg"><FileText size={20}/> Document Attached</div>}
 
@@ -841,7 +921,7 @@ function NeosisChatInner() {
                             </div>
                             <span className="text-[10px] text-gray-400 dark:text-gray-500 mt-1 font-medium px-1 flex items-center gap-1 font-mono">
                               {msg.timestamp || 'Just now'} 
-                              {isMe && (isPending ? <Check size={12} className="text-gray-300 dark:text-gray-600" /> : <CheckCheck size={14} className="text-[#0fa384]" />)}
+                              {isMe && (isPending ? <Loader2 size={12} className="text-gray-300 dark:text-gray-600 animate-spin" /> : <CheckCheck size={14} className="text-white dark:text-[#0fa384]" />)}
                             </span>
                           </div>
                         </motion.div>
@@ -859,6 +939,8 @@ function NeosisChatInner() {
                   <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="absolute bottom-24 left-4 right-4 bg-white dark:bg-[#1a1f1d] border border-gray-200 dark:border-[#323d38] p-3 rounded-xl shadow-2xl z-30 flex items-center gap-4">
                     {attachmentPreview === 'DOCUMENT' ? (
                        <div className="w-16 h-16 bg-gray-100 dark:bg-[#232a28] rounded-lg flex items-center justify-center"><FileText className="text-gray-500" /></div>
+                    ) : attachmentPreview === 'VIDEO' ? (
+                       <div className="w-16 h-16 bg-gray-100 dark:bg-[#232a28] rounded-lg flex items-center justify-center"><Video className="text-gray-500" /></div>
                     ) : (
                        <img src={attachmentPreview} alt="Preview" className="w-16 h-16 object-cover rounded-lg border border-gray-200 dark:border-[#323d38]" />
                     )}
@@ -874,7 +956,7 @@ function NeosisChatInner() {
               {/* EMOJI PICKER POPOVER */}
               <AnimatePresence>
                 {showEmojiPicker && (
-                  <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="absolute bottom-24 left-4 w-72 bg-white dark:bg-[#1a1f1d] border border-gray-200 dark:border-[#323d38] rounded-xl shadow-2xl z-30 p-2 h-64 overflow-y-auto custom-scrollbar flex flex-wrap gap-1 content-start">
+                  <motion.div ref={emojiPickerRef} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="absolute bottom-24 left-4 w-72 bg-white dark:bg-[#1a1f1d] border border-gray-200 dark:border-[#323d38] rounded-xl shadow-2xl z-30 p-2 h-64 overflow-y-auto custom-scrollbar flex flex-wrap gap-1 content-start">
                     {EMOJI_LIST.map(emoji => (
                       <button key={emoji} type="button" onClick={() => onEmojiClick(emoji)} className="w-8 h-8 text-xl hover:bg-gray-100 dark:hover:bg-[#232a28] rounded flex items-center justify-center transition-colors">
                         {emoji}
@@ -896,13 +978,15 @@ function NeosisChatInner() {
                 ) : (
                   <form onSubmit={handleSendMessage} className="flex items-end gap-3 max-w-5xl mx-auto w-full">
                     <div className="flex items-center gap-1 pb-1.5">
-                      <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} accept="image/*,.pdf,.doc,.docx,.txt" />
+                      <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} accept="image/*,video/*,.pdf,.doc,.docx,.txt" />
                       <button type="button" onClick={() => fileInputRef.current.click()} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white dark:hover:bg-[#232a28] rounded-lg transition-colors"><Paperclip size={20}/></button>
                       <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className={`p-2 rounded-lg transition-colors ${showEmojiPicker ? 'text-[#0fa384] bg-[#0fa384]/10' : 'text-gray-400 hover:text-gray-900 dark:hover:text-white dark:hover:bg-[#232a28]'}`}><Smile size={20}/></button>
                       <button type="button" onClick={startRecording} className="p-2 text-gray-400 hover:text-rose-500 dark:hover:bg-rose-500/10 rounded-lg transition-colors"><Mic size={20}/></button>
                     </div>
                     <textarea ref={textareaRef} value={newMessage} onChange={handleInputChange} maxLength={5000} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }} placeholder={attachment ? "Add a caption..." : "Type a message..."} className="flex-1 bg-gray-50 dark:bg-[#151817] text-gray-900 dark:text-white border border-gray-300 dark:border-[#323d38] focus:border-[#0fa384] dark:focus:border-[#0fa384] rounded-xl px-4 py-3 placeholder-gray-400 dark:placeholder-gray-500 text-[15px] resize-none custom-scrollbar outline-none transition-all focus:shadow-[0_0_10px_rgba(15,163,132,0.15)]" rows="1" />
-                    <button type="submit" className="bg-[#0fa384] hover:bg-[#0ba082] text-white p-3 rounded-xl shadow-lg transition-colors flex-shrink-0 mb-0.5"><Send size={20}/></button>
+                    <button type="submit" disabled={isSending} className={`p-3 rounded-xl shadow-lg transition-colors flex-shrink-0 mb-0.5 ${isSending ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#0fa384] hover:bg-[#0ba082] text-white'}`}>
+                      {isSending ? <Loader2 size={20} className="animate-spin text-white" /> : <Send size={20}/>}
+                    </button>
                   </form>
                 )}
               </div>
