@@ -17,7 +17,13 @@ public class ChatMessage {
     @Column(columnDefinition = "TEXT")
     private String content;
     
-    private String timestamp; // Frontend display string (e.g. "10:25 AM")
+    private String timestamp; 
+
+    // FIX: Added fields for Rich Media attachments (Voice Notes, Images)
+    private String messageType = "TEXT"; 
+    
+    @Column(columnDefinition = "TEXT")
+    private String mediaData;
 
     @CreationTimestamp
     @Column(updatable = false)
@@ -49,6 +55,12 @@ public class ChatMessage {
 
     public String getTimestamp() { return timestamp; }
     public void setTimestamp(String timestamp) { this.timestamp = timestamp; }
+    
+    public String getMessageType() { return messageType; }
+    public void setMessageType(String messageType) { this.messageType = messageType; }
+
+    public String getMediaData() { return mediaData; }
+    public void setMediaData(String mediaData) { this.mediaData = mediaData; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

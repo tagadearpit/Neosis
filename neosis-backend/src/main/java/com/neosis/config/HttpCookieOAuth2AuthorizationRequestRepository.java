@@ -7,10 +7,7 @@ import org.springframework.stereotype.Component;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
+import java.io.*;
 import java.util.Base64;
 import java.util.Optional;
 
@@ -19,6 +16,22 @@ public class HttpCookieOAuth2AuthorizationRequestRepository implements Authoriza
 
     public static final String OAUTH2_AUTHORIZATION_REQUEST_COOKIE_NAME = "oauth2_auth_request";
     private static final int cookieExpireSeconds = 180;
+
+    // FIX: Prevents RCE vulnerability during cookie parsing
+    private static class SecureObjectInputStream extends ObjectInputStream {
+        public SecureObjectInputStream(InputStream in) throws IOException { super(in); }
+        @Override
+        protected Class<?> resolveClass(ObjectStreamClass desc) throws IOException, ClassNotFoundException {
+            String name = desc.getName();
+            if (!name.startsWith("org.springframework.security.oauth2.") && 
+                !name.startsWith("java.lang.") && 
+                !name.startsWith("java.util.") && 
+                !name.startsWith("java.time.")) {
+                throw new ClassNotFoundException("Deserialization of class " + name + " is forbidden.");
+            }
+            return super.resolveClass(desc);
+        }
+    }
 
     @Override
     public OAuth2AuthorizationRequest loadAuthorizationRequest(HttpServletRequest request) {
@@ -91,7 +104,7 @@ public class HttpCookieOAuth2AuthorizationRequestRepository implements Authoriza
         try {
             byte[] bytes = Base64.getUrlDecoder().decode(cookie.getValue());
             ByteArrayInputStream bis = new ByteArrayInputStream(bytes);
-            ObjectInputStream in = new ObjectInputStream(bis);
+            SecureObjectInputStream in = new SecureObjectInputStream(bis); // FIX: Use secure stream
             return cls.cast(in.readObject());
         } catch (Exception e) {
             return null;

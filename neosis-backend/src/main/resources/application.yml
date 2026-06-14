@@ -1,14 +1,12 @@
 server:
   port: 8080
-  forward-headers-strategy: framework # CRITICAL: Forces Tomcat to read Render's HTTPS proxy
+  forward-headers-strategy: framework 
   servlet:
     session:
       cookie:
-        # CRITICAL FIX: Removed inner quotes to prevent Spring parsing error
         same-site: ${SESSION_COOKIE_SAME_SITE:none} 
-        secure: ${SESSION_COOKIE_SECURE:true}
+        secure: ${SESSION_COOKIE_SECURE:false}
 
-# Custom property for dynamic frontend routing
 app:
   frontend:
     url: ${FRONTEND_URL:https://neosis-static-site.onrender.com}
@@ -23,18 +21,15 @@ spring:
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
-  # JPA & Hibernate Settings
   jpa:
     open-in-view: false 
     hibernate:
-      # NOTE: Change to 'validate' once you go live in production to prevent accidental data loss
-      ddl-auto: update 
-    show-sql: true    
+      ddl-auto: ${DDL_AUTO:update} 
+    show-sql: ${SHOW_SQL:false}    
     properties:
       hibernate:
         format_sql: true
 
-  # Google OAuth 2.0 Security Configuration
   security:
     oauth2:
       client:

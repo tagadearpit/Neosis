@@ -1,18 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Lock, Shield, Eye, EyeOff, ArrowRight, X, RefreshCw, AlertTriangle, CheckCircle, Fingerprint } from 'lucide-react';
+import React, { useState } from 'react';
+import { Lock, Shield, Eye, EyeOff, ArrowRight, RefreshCw, AlertTriangle, CheckCircle, Fingerprint } from 'lucide-react';
 
-// CRITICAL FIX: Safely falls back to your live Render backend URL
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://neosis-433w.onrender.com';
 
 export default function Login() {
-  const [screen, setScreen] = useState('LOGIN'); // 'LOGIN' | 'SIGNUP' | 'RESET'
+  const [screen, setScreen] = useState('LOGIN'); 
   const [userEmail, setUserEmail] = useState('');
   const [userPassword, setUserPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState('');
-  const [isGoogleModalOpen, setIsGoogleModalOpen] = useState(false);
   
-  // Modals & Popups
   const [toasts, setToasts] = useState([]);
   const [recoveryInput, setRecoveryInput] = useState('');
   const [signupEmail, setSignupEmail] = useState('');
@@ -22,7 +19,6 @@ export default function Login() {
   const [hasSavedRecovery, setHasSavedRecovery] = useState(false);
   const [signupError, setSignupError] = useState('');
 
-  // Generate background flowing streams
   const [packetsRef] = useState(() => Array.from({ length: 6 }).map((_, i) => ({
     id: i, top: `${15 + i * 15}%`, duration: `${6 + i * 1.5}s`, delay: `${i * 0.8}s`
   })));
@@ -33,20 +29,17 @@ export default function Login() {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== newToast.id)), 3500);
   };
 
-  // Connects directly to your Spring Boot backend OAuth pipeline
   const handleGoogleLogin = () => {
     window.location.href = `${BACKEND_URL}/oauth2/authorization/google`;
   };
 
   const handleLoginSubmit = (e) => {
     e.preventDefault();
-    if (!userEmail) {
-      setLoginError('An identity email or username is required.');
-      return;
-    }
+    if (!userEmail) { setLoginError('An identity email or username is required.'); return; }
     setLoginError('');
-    addToast('Authentication payload sent.', 'info');
-    window.location.href = '/chat';
+    addToast('Routing to Secure Authentication Pipeline...', 'info');
+    // FIX: Route to actual authentication flow
+    handleGoogleLogin();
   };
 
   const generateRecoveryKey = () => {
@@ -70,13 +63,12 @@ export default function Login() {
 
   const confirmSignupRecovery = () => {
     addToast('Account initialized with Secure Hardware Seeds!', 'success');
-    window.location.href = '/chat';
+    // FIX: Route to actual authentication flow
+    handleGoogleLogin();
   };
 
   return (
     <div className="bg-[#060e20] text-[#dae2fd] font-sans min-h-screen relative overflow-hidden bg-mesh antialiased flex flex-col justify-between">
-      
-      {/* Background Cyber Matrix Streams */}
       <div className="absolute inset-0 z-0 pointer-events-none opacity-10" style={{ backgroundImage: 'linear-gradient(to right, #1E293B 1px, transparent 1px), linear-gradient(to bottom, #1E293B 1px, transparent 1px)', backgroundSize: '64px 64px' }}></div>
       <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden opacity-30">
         <div className="flex justify-around w-full h-full">
@@ -92,7 +84,6 @@ export default function Login() {
 
       <style dangerouslySetInnerHTML={{__html: `@keyframes packet { 0% { transform: translateX(0); opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { transform: translateX(115vw); opacity: 0; } }`}} />
 
-      {/* Security Alerts Toast Container */}
       <div className="fixed top-6 right-6 z-50 flex flex-col gap-3 max-w-sm pointer-events-none">
         {toasts.map((t) => (
           <div key={t.id} className="pointer-events-auto bg-[#131b2e] border border-[#4edea3]/20 rounded-lg px-4 py-3 flex items-start gap-3 shadow-xl custom-glow-active">
@@ -106,8 +97,6 @@ export default function Login() {
       </div>
 
       <div className="w-full flex-grow flex items-center justify-center p-6 z-10 relative">
-        
-        {/* ================= LOGIN PANEL ================= */}
         {screen === 'LOGIN' && (
           <main className="w-full max-w-[420px] bg-[#131b2e] border border-[#2d3449] rounded-xl custom-glow-card relative flex flex-col pt-10 pb-8 px-8 sm:px-10">
             <div className="absolute inset-0 rounded-xl pointer-events-none z-0">
@@ -151,7 +140,6 @@ export default function Login() {
                   <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                 </button>
 
-                {/* GOOGLE OAUTH REDIRECT LINK */}
                 <button type="button" onClick={handleGoogleLogin} className="w-full bg-[#171f33] border border-[#3c4a42] text-[#dae2fd] font-mono text-xs py-3 px-6 rounded hover:border-[#4edea3]/50 flex items-center justify-center gap-2.5 cursor-pointer transition-all">
                   <svg className="w-4 h-4" viewBox="0 0 24 24">
                     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"></path>
@@ -178,7 +166,6 @@ export default function Login() {
           </main>
         )}
 
-        {/* ================= REGISTER WORKSPACE PANEL ================= */}
         {screen === 'SIGNUP' && (
           <main className="w-full max-w-[480px] bg-[#131b2e] border border-[#2d3449] rounded-xl custom-glow-card relative pt-8 pb-8 px-8 sm:px-10 z-10">
             <div className="flex flex-col items-center mb-6">
@@ -238,7 +225,6 @@ export default function Login() {
           </main>
         )}
 
-        {/* ================= PASSWORD RESET SEED PORTAL ================= */}
         {screen === 'RESET' && (
           <main className="w-full max-w-[420px] bg-[#131b2e] border border-[#2d3449] rounded-xl custom-glow-card relative pt-10 pb-8 px-8 sm:px-10 z-10">
             <div className="flex flex-col items-center mb-8">

@@ -49,10 +49,9 @@
 
 @keyframes shimmer { 100% { transform: translateX(100%); } }
 
-/* Smooth customized input styling properties */
+/* FIX: Ensure inputs don't have ugly blue browser rings */
 input, textarea { outline: none; }
 
-/* Blinking cursor & UI animations */
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }

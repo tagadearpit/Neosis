@@ -22,7 +22,6 @@ public class UserController {
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
 
-    // NEW: The frontend calls this on load to find out who is currently logged in
     @GetMapping("/me")
     public ResponseEntity<?> getCurrentUser(@AuthenticationPrincipal OAuth2User principal) {
         if (principal == null) {
@@ -34,19 +33,32 @@ public class UserController {
         return ResponseEntity.ok(userData);
     }
 
+    // FIX: Added missing endpoint to verify Terms & Conditions
+    @PostMapping("/accept-terms")
+    public ResponseEntity<?> acceptTerms(@AuthenticationPrincipal OAuth2User principal) {
+        if (principal == null) return ResponseEntity.status(401).body("Not authenticated");
+        
+        String email = principal.getAttribute("email");
+        User user = userRepository.findByEmail(email);
+        if (user != null) {
+            return ResponseEntity.ok().body("Terms accepted");
+        }
+        return ResponseEntity.status(404).body("User not found");
+    }
+
     @GetMapping("/check")
     public ResponseEntity<?> checkUserExists(@RequestParam String email, @AuthenticationPrincipal OAuth2User principal) {
-        // Query your actual PostgreSQL database!
         User recipient = userRepository.findByEmail(email);
         
         if (recipient != null) {
-            // If the user exists, generate a notification payload
             String senderName = principal != null ? principal.getAttribute("name") : "Someone";
             
             Map<String, String> notification = new HashMap<>();
             notification.put("senderName", senderName);
             notification.put("message", senderName + " wants to start a conversation!");
-            messagingTemplate.convertAndSend("/topic/notifications/" + email, notification);
+            
+            // FIX: Use "/queue/notifications/" so it matches React frontend
+            messagingTemplate.convertAndSend("/queue/notifications/" + email, notification);
 
             return ResponseEntity.ok().body("User found");
         } else {

@@ -8,7 +8,6 @@ import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.stereotype.Controller;
-import org.springframework.web.util.HtmlUtils;
 
 import java.util.Map;
 
@@ -23,7 +22,6 @@ public class ChatController {
 
     @MessageMapping("/chat.send")
     public void sendMessage(@Payload ChatMessage chatMessage, OAuth2AuthenticationToken token) {
-        
         if (token == null) return; 
 
         Map<String, Object> attributes = token.getPrincipal().getAttributes();
@@ -34,14 +32,16 @@ public class ChatController {
             return; 
         }
 
-        String safeContent = HtmlUtils.htmlEscape(chatMessage.getContent());
-        chatMessage.setContent(safeContent);
-        // -----------------------------------------------------------
+        // FIX: Removed HtmlUtils.htmlEscape() - React natively prevents XSS. Escaping breaks rich text.
+        
+        // Save to DB to generate the official ID
+        ChatMessage savedMessage = chatMessageRepository.save(chatMessage);
 
-        chatMessageRepository.save(chatMessage);
-        // -----------------------------------------------------------
-
-        messagingTemplate.convertAndSend("/queue/messages/" + chatMessage.getRecipientEmail(), chatMessage);
+        // FIX: Broadcast to RECIPIENT
+        messagingTemplate.convertAndSend("/queue/messages/" + savedMessage.getRecipientEmail(), savedMessage);
+        
+        // FIX: Broadcast back to SENDER (so frontend clears "pending" checkmarks)
+        messagingTemplate.convertAndSend("/queue/messages/" + savedMessage.getSenderEmail(), savedMessage);
     }
 
     @MessageMapping("/chat.typing")
@@ -52,7 +52,6 @@ public class ChatController {
         messagingTemplate.convertAndSend("/queue/typing/" + recipientEmail, payload);
     }
 
-    // --- NEW: WEBRTC SIGNALING ENDPOINT ---
     @MessageMapping("/chat.signal")
     public void processWebRTCSignal(@Payload Map<String, Object> payload, OAuth2AuthenticationToken token) {
         if (token == null) return; 

@@ -1,8 +1,11 @@
 package com.neosis.controller;
 
 import com.neosis.model.ChatRequest;
+import com.neosis.model.User;
 import com.neosis.repository.ChatRequestRepository;
+import com.neosis.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.web.bind.annotation.*;
 
@@ -15,18 +18,34 @@ public class ContactController {
 
     @Autowired
     private ChatRequestRepository requestRepository;
+    
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private SimpMessagingTemplate messagingTemplate;
 
     @PostMapping("/request")
     public String sendRequest(@RequestParam String receiverEmail, OAuth2AuthenticationToken token) {
         if (token == null) return "Unauthorized";
         String senderEmail = (String) token.getPrincipal().getAttributes().get("email");
         
+        // SECURITY FIX: Prevent sending requests to non-existent users
+        User receiver = userRepository.findByEmail(receiverEmail);
+        if (receiver == null) {
+            return "Error: User does not exist in the Neosis network.";
+        }
+
         if (requestRepository.existsBySenderEmailAndReceiverEmail(senderEmail, receiverEmail)) {
             return "Request already sent.";
         }
         
         ChatRequest req = new ChatRequest(senderEmail, receiverEmail, "PENDING");
         requestRepository.save(req);
+        
+        // UX FIX: Send real-time notification to the recipient
+        messagingTemplate.convertAndSend("/queue/notifications/" + receiverEmail, "{\"type\": \"NEW_REQUEST\"}");
+        
         return "Request Sent";
     }
 
@@ -50,6 +69,10 @@ public class ContactController {
 
             req.setStatus("ACCEPTED");
             requestRepository.save(req);
+            
+            // UX FIX: Send real-time notification to the sender so their UI updates
+            messagingTemplate.convertAndSend("/queue/notifications/" + req.getSenderEmail(), "{\"type\": \"REQUEST_ACCEPTED\"}");
+            
             return "Accepted";
         }
         return "Not found";
