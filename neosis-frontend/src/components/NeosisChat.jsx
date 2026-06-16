@@ -77,10 +77,10 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
   reader.onerror = error => reject(error);
 });
 
-// FIX #2: Composite keys applied during render to prevent duplicate collision
+// Composite keys applied during render to prevent duplicate collision
 const EMOJI_LIST = ["😀","😂","🤣","😊","🥰","😍","😒","😘","💕","😁","👍","🙌","✌️","✨","🔥","🎉","💯","💔","❤️","🥺","😎","🤔","🙄","😴","🤐","🤢","🤧","😷","🤯","🤠","🥳","🤫","🤭","🧐","🤓","😈","💀","👻","👽","🤖","👋","🤚","🖐","✋","🖖","👌","🤏","🤞","🤟","🤘","🤙","👈","👉","👆","👇","☝️","👍","👎","✊","👊","🤛","🤜","👏","🙌","👐","🤲","🤝","🙏","✍️","💅","🤳","💪","🦾","🦵","🦿","🦶","👣","👂","🦻","👃","🦼","🧠","🦷","🦴","👀","👁","👅","👄","💋","🩸"];
 
-// FIX P2: Ready for Dynamic TURN integration. Removed public credentials.
+// Ready for Dynamic TURN integration. Removed public credentials.
 const rtcConfiguration = {
   iceServers: [ 
     { urls: 'stun:stun.l.google.com:19302' }, 
@@ -107,7 +107,7 @@ function NeosisChatInner() {
   const [unreadCounts, setUnreadCounts] = useState({});
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') !== 'light');
   
-  // FIX P1: Server acts as the ultimate truth for T&C
+  // Server acts as the ultimate truth for T&C
   const [hasAcceptedTC, setHasAcceptedTC] = useState(true); 
 
   const [isRemoteTyping, setIsRemoteTyping] = useState(false);
@@ -290,7 +290,6 @@ function NeosisChatInner() {
           const data = JSON.parse(message.body);
           
           if (data.type === 'offer') { 
-            // FIX P3: Defense-in-depth against unauthorized signaling
             if (!friendsRef.current.includes(data.senderEmail)) return;
 
             if (callStateRef.current !== 'idle') {
@@ -347,7 +346,6 @@ function NeosisChatInner() {
         if (!isMounted) return;
         if (!userRes.data || !userRes.data.email) { window.location.href = '/login'; return; }
         
-        // FIX P1: Enforce server-side T&C tracking 
         setCurrentUser(userRes.data);
         if (userRes.data.termsAccepted !== undefined) {
           setHasAcceptedTC(userRes.data.termsAccepted === 'true');
@@ -370,7 +368,6 @@ function NeosisChatInner() {
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
       cleanupCallResources(); 
       
-      // FIX #2: Prevents mic resource leak on component unmount
       if (isRecordingRef.current && mediaRecorderRef.current) {
         mediaRecorderRef.current.stop();
         clearInterval(recordingTimerRef.current);
@@ -389,7 +386,6 @@ function NeosisChatInner() {
   const handleStartCall = async (video = true) => {
     if (callState !== 'idle') return; 
     
-    // FIX C: Hardened navigator checks
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       showToast("Media devices not supported.", "error");
       return;
@@ -412,13 +408,12 @@ function NeosisChatInner() {
       sendWebRTCSignal({ type: 'offer', sdp: offer, recipientEmail: activeChat, isVideo: video });
     } catch (err) { 
       showToast("Camera/Mic access denied", "error"); 
-      callPeerEmailRef.current = null; // FIX B: Clears target to prevent errant drops
+      callPeerEmailRef.current = null; 
       setCallState('idle'); 
     }
   };
 
   const handleAcceptCall = async () => {
-    // FIX #1: Lock recipient synchronously before passing through async bounds
     if (!incomingCallDataRef.current) return;
     const { senderEmail, isVideo, sdp } = incomingCallDataRef.current;
 
@@ -468,7 +463,6 @@ function NeosisChatInner() {
   };
   
   const handleAcceptRequest = async (requestId) => { 
-    // FIX D: Ensure users see exactly why accept logic fails
     try { await api.post('/api/contacts/accept', new URLSearchParams({ requestId: requestId })); fetchSidebarData(); setShowNotifications(false); showToast("Accepted!"); } catch (err) { showToast("Failed to accept request", "error"); } 
   };
   
@@ -495,9 +489,8 @@ function NeosisChatInner() {
     const file = e.target.files[0];
     if (!file) return;
     
-    // FIX #3: Caps out massive files preventing WebSocket stringify blocks
     if (file.size > 100 * 1024) { 
-      showToast("File too large for WebSocket Demo (Max 100KB).", "error"); 
+      showToast("File too large for WebSocket Demo (Max 100KB). Implement /api/upload.", "error"); 
       return; 
     }
     
@@ -522,7 +515,7 @@ function NeosisChatInner() {
   };
 
   const startRecording = async () => {
-    if (isRecordingRef.current) return; // FIX #6: Prevents duplicate async allocations
+    if (isRecordingRef.current) return; 
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       showToast("Media recording not supported.", "error");
@@ -531,13 +524,11 @@ function NeosisChatInner() {
 
     let stream = null;
     try {
-      // FIX #3: Lock target to prevent sending audio to wrong party if user clicks away
       const recipientAtRecordStart = activeChatRef.current;
       if (!recipientAtRecordStart) return;
 
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // FIX #4: Fallback encoding formats to guarantee Safari playability
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/mp4';
       mediaRecorderRef.current = new MediaRecorder(stream, { mimeType });
       audioChunksRef.current = [];
@@ -550,7 +541,6 @@ function NeosisChatInner() {
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
         if (stream) stream.getTracks().forEach(track => track.stop());
         
-        // FIX #3: Voice Note Size gate protection
         if (audioBlob.size > 100 * 1024) {
           showToast("Recording too large for demo limits.", "error");
           return;
@@ -566,7 +556,6 @@ function NeosisChatInner() {
       isRecordingRef.current = true; 
       setRecordingTime(0);
 
-      // FIX #3: Sets a hard 30-second cap
       recordingTimerRef.current = setInterval(() => {
         setRecordingTime(prev => {
           if (prev + 1 >= 30) {
@@ -578,7 +567,6 @@ function NeosisChatInner() {
       }, 1000);
     } catch (err) {
       showToast("Microphone access denied or failed", "error");
-      // FIX #4: Hardens cleanup to prevent persistent red-mic tab dot
       if (stream) stream.getTracks().forEach(t => t.stop());
       isRecordingRef.current = false;
       setIsRecording(false);
@@ -594,7 +582,6 @@ function NeosisChatInner() {
     }
   };
 
-  // FIX #7: Transforms function back to sync processing. Handles offline validation.
   const sendRichMessage = (text, type = 'TEXT', mediaData = null, explicitRecipient = null) => {
     const target = explicitRecipient || activeChatRef.current;
     if (!target || !stompClientRef.current || !stompClientRef.current.connected) return false;
@@ -669,17 +656,72 @@ function NeosisChatInner() {
     return messages.filter(m => m.content && m.content.toLowerCase().includes(lowerQuery)); 
   }, [messages, isSearching, searchQuery]);
 
-  if (!currentUser) return <div className="flex h-screen bg-[#111313] items-center justify-center"><Loader2 size={48} className="text-[#0fa384] animate-spin" /></div>;
+  if (!currentUser) {
+    return (
+      <div className="flex h-screen bg-white dark:bg-[#111313] transition-colors duration-300 font-sans relative overflow-hidden p-2 md:p-4">
+        <div className="w-full max-w-7xl mx-auto rounded-3xl shadow-2xl overflow-hidden flex h-full border border-gray-200 dark:border-[#323d38] relative z-10 bg-white dark:bg-[#111313]">
+          <div className="hidden md:flex w-[350px] bg-slate-50 dark:bg-[#1a1f1d] flex-col flex-shrink-0 z-20 border-r border-gray-200 dark:border-[#232a28]">
+            <div className="p-4 flex justify-between items-center border-b border-gray-200 dark:border-[#232a28]">
+               <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
+                  <div className="w-20 h-5 bg-gray-200 dark:bg-[#232a28] rounded animate-pulse"></div>
+               </div>
+               <div className="flex gap-2">
+                  <div className="w-8 h-8 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
+                  <div className="w-8 h-8 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
+               </div>
+            </div>
+            <div className="p-4 border-b border-gray-200 dark:border-[#232a28]">
+               <div className="w-full h-10 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
+            </div>
+            <div className="flex-1 p-2 space-y-2">
+               {[1,2,3,4,5].map(i => (
+                 <div key={i} className="flex items-center gap-3.5 p-3">
+                   <div className="w-12 h-12 bg-gray-200 dark:bg-[#232a28] rounded-full animate-pulse shrink-0"></div>
+                   <div className="flex-1 space-y-2">
+                     <div className="w-24 h-4 bg-gray-200 dark:bg-[#232a28] rounded animate-pulse"></div>
+                     <div className="w-32 h-3 bg-gray-200 dark:bg-[#232a28] rounded animate-pulse"></div>
+                   </div>
+                 </div>
+               ))}
+            </div>
+          </div>
+          <div className="flex-1 flex flex-col bg-white dark:bg-[#111313]">
+            <div className="px-6 py-4 bg-white dark:bg-[#1a1f1d] border-b border-gray-200 dark:border-[#232a28] flex items-center justify-between">
+               <div className="flex items-center gap-4">
+                  <div className="w-11 h-11 bg-gray-200 dark:bg-[#232a28] rounded-full animate-pulse"></div>
+                  <div className="space-y-2">
+                    <div className="w-28 h-4 bg-gray-200 dark:bg-[#232a28] rounded animate-pulse"></div>
+                    <div className="w-16 h-3 bg-gray-200 dark:bg-[#232a28] rounded animate-pulse"></div>
+                  </div>
+               </div>
+               <div className="flex gap-2">
+                  <div className="w-8 h-8 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
+                  <div className="w-8 h-8 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
+               </div>
+            </div>
+            <div className="flex-1 p-6 space-y-6">
+               <div className="flex justify-start"><div className="w-64 h-16 bg-gray-100 dark:bg-[#232a28] rounded-2xl rounded-tl-sm animate-pulse"></div></div>
+               <div className="flex justify-end"><div className="w-48 h-12 bg-gray-200 dark:bg-[#0fa384]/20 rounded-2xl rounded-br-sm animate-pulse"></div></div>
+               <div className="flex justify-start"><div className="w-56 h-12 bg-gray-100 dark:bg-[#232a28] rounded-2xl rounded-tl-sm animate-pulse"></div></div>
+            </div>
+            <div className="p-4 bg-white dark:bg-[#1a1f1d] border-t border-gray-200 dark:border-[#232a28]">
+               <div className="w-full max-w-5xl mx-auto h-12 bg-gray-100 dark:bg-[#151817] rounded-xl animate-pulse"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const getToastBg = (type) => {
-    // FIX Bug A: Validates white text colors correctly
     if (type === 'error') return 'bg-rose-500 text-white';
     if (type === 'info') return 'bg-[#151817] border border-[#323d38] text-white';
     return 'bg-[#0fa384] text-white';
   };
 
   return (
-    <div className="flex h-screen bg-white dark:bg-[#111313] transition-colors duration-300 font-sans relative overflow-hidden">
+    <div className="flex h-screen bg-white dark:bg-[#111313] transition-colors duration-300 font-sans relative overflow-hidden p-2 md:p-4">
       <AnimatePresence>
         {!hasAcceptedTC && (
           <motion.div 
@@ -781,7 +823,7 @@ function NeosisChatInner() {
         )}
       </AnimatePresence>
 
-      <motion.div variants={pageTransition} initial="hidden" animate="show" className={`w-full h-full flex z-10 ${!hasAcceptedTC ? 'pointer-events-none blur-sm' : ''}`}>
+      <motion.div variants={pageTransition} initial="hidden" animate="show" className={`w-full max-w-7xl mx-auto rounded-3xl shadow-2xl overflow-hidden flex h-full border border-gray-200 dark:border-[#323d38] relative z-10 bg-white dark:bg-[#111313] ${!hasAcceptedTC ? 'pointer-events-none blur-sm' : ''}`}>
         
         <div className={`${activeChat ? 'hidden md:flex' : 'flex'} w-full md:w-[350px] bg-slate-50 dark:bg-[#1a1f1d] flex-col flex-shrink-0 z-20 border-r border-gray-200 dark:border-[#232a28] transition-colors duration-300`}>
           <div className="p-4 flex justify-between items-center transition-colors duration-300 border-b border-gray-200 dark:border-[#232a28]">
@@ -931,7 +973,15 @@ function NeosisChatInner() {
               </AnimatePresence>
               
               <div className="flex-1 p-6 overflow-y-auto custom-scrollbar space-y-5 bg-white dark:bg-[#111313] transition-colors relative">
-                {isChatLoading ? <div className="flex justify-center items-center h-full"><Loader2 className="animate-spin text-[#0fa384]" size={32} /></div> : (
+                {isChatLoading ? (
+                  <div className="w-full h-full space-y-6">
+                    <div className="flex justify-start"><div className="w-64 h-16 bg-gray-100 dark:bg-[#232a28] rounded-2xl rounded-tl-sm animate-pulse"></div></div>
+                    <div className="flex justify-end"><div className="w-48 h-12 bg-gray-200 dark:bg-[#0fa384]/20 rounded-2xl rounded-br-sm animate-pulse"></div></div>
+                    <div className="flex justify-start"><div className="w-56 h-12 bg-gray-100 dark:bg-[#232a28] rounded-2xl rounded-tl-sm animate-pulse"></div></div>
+                    <div className="flex justify-start"><div className="w-40 h-10 bg-gray-100 dark:bg-[#232a28] rounded-2xl rounded-tl-sm animate-pulse"></div></div>
+                    <div className="flex justify-end"><div className="w-72 h-16 bg-gray-200 dark:bg-[#0fa384]/20 rounded-2xl rounded-br-sm animate-pulse"></div></div>
+                  </div>
+                ) : (
                   <AnimatePresence>
                     {displayedMessages.map((msg, index) => {
                       const isMe = msg.senderEmail === currentUser.email;
@@ -944,18 +994,16 @@ function NeosisChatInner() {
                           <div className={`flex flex-col max-w-[85%] md:max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
                             <div className={`px-4 py-2.5 text-[15px] leading-relaxed shadow-sm break-words ${isMe ? 'bg-[#0fa384] text-white rounded-2xl rounded-br-sm' : 'bg-gray-100 dark:bg-[#232a28] text-gray-900 dark:text-gray-200 rounded-2xl rounded-tl-sm transition-colors'}`}>
                               
-                              {/* RENDER ATTACHMENTS/MEDIA */}
                               {msg.messageType === 'IMAGE' && <img src={msg.mediaData} alt="attachment" className="rounded-lg max-w-full h-auto mb-2 object-cover" />}
                               {msg.messageType === 'VIDEO' && <video src={msg.mediaData} controls className="rounded-lg max-w-full h-auto mb-2" />}
                               {msg.messageType === 'AUDIO' && <audio src={msg.mediaData} controls className="mb-2 max-w-[240px] h-10 rounded-full" />}
                               {msg.messageType === 'DOCUMENT' && <div className="flex items-center gap-2 mb-2 p-2 bg-black/10 rounded-lg"><FileText size={20}/> Document Attached</div>}
 
-                              {/* RENDER TEXT */}
                               {isSearching && searchQuery && rawContent ? highlightText(rawContent, searchQuery) : rawContent}
                             </div>
                             <span className="text-[10px] text-gray-400 dark:text-gray-500 mt-1 font-medium px-1 flex items-center gap-1 font-mono">
                               {msg.timestamp || 'Just now'} 
-                              {isMe && (isPending ? <Loader2 size={12} className="text-gray-300 dark:text-gray-600 animate-spin" /> : <CheckCheck size={14} className="text-white dark:text-[#0fa384]" />)}
+                              {isMe && (isPending ? <Loader2 size={12} className="text-gray-300 dark:text-gray-600 animate-spin" /> : <CheckCheck size={14} className="text-[#0fa384]" />)}
                             </span>
                           </div>
                         </motion.div>
@@ -967,7 +1015,6 @@ function NeosisChatInner() {
                 <div ref={messagesEndRef} className="h-4" />
               </div>
 
-              {/* ATTACHMENT PREVIEW TRAY */}
               <AnimatePresence>
                 {attachmentPreview && (
                   <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="absolute bottom-24 left-4 right-4 bg-white dark:bg-[#1a1f1d] border border-gray-200 dark:border-[#323d38] p-3 rounded-xl shadow-2xl z-30 flex items-center gap-4">
@@ -987,11 +1034,9 @@ function NeosisChatInner() {
                 )}
               </AnimatePresence>
 
-              {/* FIX #5: EMOJI PICKER POPOVER - Handles overlapping bounds with preview tray */}
               <AnimatePresence>
                 {showEmojiPicker && (
                   <motion.div ref={emojiPickerRef} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className={`absolute left-4 w-72 bg-white dark:bg-[#1a1f1d] border border-gray-200 dark:border-[#323d38] rounded-xl shadow-2xl z-30 p-2 h-64 overflow-y-auto custom-scrollbar flex flex-wrap gap-1 content-start ${attachmentPreview ? 'bottom-40' : 'bottom-24'}`}>
-                    {/* FIX #2: Unique composite keys prevent rendering loss */}
                     {EMOJI_LIST.map((emoji, idx) => (
                       <button key={`${idx}-${emoji}`} type="button" onClick={() => onEmojiClick(emoji)} className="w-8 h-8 text-xl hover:bg-gray-100 dark:hover:bg-[#232a28] rounded flex items-center justify-center transition-colors">
                         {emoji}
@@ -1003,7 +1048,6 @@ function NeosisChatInner() {
 
               <div className="p-4 bg-white dark:bg-[#1a1f1d] border-t border-gray-200 dark:border-[#232a28] z-20 transition-colors">
                 
-                {/* RECORDING UI OVERLAY */}
                 {isRecording ? (
                   <div className="flex items-center gap-4 max-w-5xl mx-auto w-full bg-rose-500/10 border border-rose-500/20 rounded-xl px-4 py-3">
                     <div className="w-3 h-3 bg-rose-500 rounded-full animate-ping"></div>
@@ -1015,7 +1059,10 @@ function NeosisChatInner() {
                     <div className="flex items-center gap-1 pb-1.5">
                       <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} accept="image/*,video/*,.pdf,.doc,.docx,.txt" />
                       <button type="button" onClick={() => fileInputRef.current.click()} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white dark:hover:bg-[#232a28] rounded-lg transition-colors"><Paperclip size={20}/></button>
-                      <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className={`p-2 rounded-lg transition-colors ${showEmojiPicker ? 'text-[#0fa384] bg-[#0fa384]/10' : 'text-gray-400 hover:text-gray-900 dark:hover:text-white dark:hover:bg-[#232a28]'}`}><Smile size={20}/></button>
+                      <button type="button" onClick={() => {
+                        if (!showEmojiPicker && attachmentPreview) {}
+                        setShowEmojiPicker(!showEmojiPicker);
+                      }} className={`p-2 rounded-lg transition-colors ${showEmojiPicker ? 'text-[#0fa384] bg-[#0fa384]/10' : 'text-gray-400 hover:text-gray-900 dark:hover:text-white dark:hover:bg-[#232a28]'}`}><Smile size={20}/></button>
                       <button type="button" onClick={startRecording} className="p-2 text-gray-400 hover:text-rose-500 dark:hover:bg-rose-500/10 rounded-lg transition-colors"><Mic size={20}/></button>
                     </div>
                     <textarea ref={textareaRef} value={newMessage} onChange={handleInputChange} maxLength={5000} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }} placeholder={attachment ? "Add a caption..." : "Type a message..."} className="flex-1 bg-gray-50 dark:bg-[#151817] text-gray-900 dark:text-white border border-gray-300 dark:border-[#323d38] focus:border-[#0fa384] dark:focus:border-[#0fa384] rounded-xl px-4 py-3 placeholder-gray-400 dark:placeholder-gray-500 text-[15px] resize-none custom-scrollbar outline-none transition-all focus:shadow-[0_0_10px_rgba(15,163,132,0.15)]" rows="1" />
