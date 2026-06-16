@@ -1,32 +1,26 @@
 package com.neosis.model;
 
-import jakarta.persistence.*;
-import org.hibernate.annotations.CreationTimestamp;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.annotation.Transient;
+import org.springframework.data.mongodb.core.mapping.Document;
 import java.time.LocalDateTime;
 
-@Entity
+@Document(collection = "messages")
 public class ChatMessage {
     
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id; 
+    private String id; // CRITICAL FIX: MongoDB uses String ObjectIDs
     
     private String senderEmail;
     private String recipientEmail;
-
-    @Column(columnDefinition = "TEXT")
     private String content;
-    
     private String timestamp; 
 
-    // FIX: Added fields for Rich Media attachments (Voice Notes, Images)
     private String messageType = "TEXT"; 
-    
-    @Column(columnDefinition = "TEXT")
     private String mediaData;
 
-    @CreationTimestamp
-    @Column(updatable = false)
+    @CreatedDate
     private LocalDateTime createdAt;
 
     @Transient
@@ -41,8 +35,8 @@ public class ChatMessage {
         this.timestamp = timestamp;
     }
 
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
 
     public String getSenderEmail() { return senderEmail; }
     public void setSenderEmail(String senderEmail) { this.senderEmail = senderEmail; }

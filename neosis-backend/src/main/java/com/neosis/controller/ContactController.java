@@ -30,7 +30,6 @@ public class ContactController {
         if (token == null) return "Unauthorized";
         String senderEmail = (String) token.getPrincipal().getAttributes().get("email");
         
-        // SECURITY FIX: Prevent sending requests to non-existent users
         User receiver = userRepository.findByEmail(receiverEmail);
         if (receiver == null) {
             return "Error: User does not exist in the Neosis network.";
@@ -43,7 +42,6 @@ public class ContactController {
         ChatRequest req = new ChatRequest(senderEmail, receiverEmail, "PENDING");
         requestRepository.save(req);
         
-        // UX FIX: Send real-time notification to the recipient
         messagingTemplate.convertAndSend("/queue/notifications/" + receiverEmail, "{\"type\": \"NEW_REQUEST\"}");
         
         return "Request Sent";
@@ -57,7 +55,7 @@ public class ContactController {
     }
 
     @PostMapping("/accept")
-    public String acceptRequest(@RequestParam Long requestId, OAuth2AuthenticationToken token) {
+    public String acceptRequest(@RequestParam String requestId, OAuth2AuthenticationToken token) { // CRITICAL FIX: Long -> String
         if (token == null) return "Unauthorized";
         String myEmail = (String) token.getPrincipal().getAttributes().get("email");
 
@@ -70,7 +68,6 @@ public class ContactController {
             req.setStatus("ACCEPTED");
             requestRepository.save(req);
             
-            // UX FIX: Send real-time notification to the sender so their UI updates
             messagingTemplate.convertAndSend("/queue/notifications/" + req.getSenderEmail(), "{\"type\": \"REQUEST_ACCEPTED\"}");
             
             return "Accepted";

@@ -1,30 +1,25 @@
 package com.neosis.model;
 
-import jakarta.persistence.*;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
 
-@Entity
-@Table(name = "users")
+@Document(collection = "users")
 public class User {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    private String id; // CRITICAL FIX: MongoDB uses String ObjectIDs, not Longs
 
-    @Column(unique = true, nullable = false)
     private String email;
-
     private String name;
 
-    // Default constructor required by JPA
     public User() {
     }
 
-    // Getters and Setters
-    public Long getId() {
+    public String getId() {
         return id;
     }
 
-    public void setId(Long id) {
+    public void setId(String id) {
         this.id = id;
     }
 

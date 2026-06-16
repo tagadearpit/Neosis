@@ -5,7 +5,6 @@ server:
     session:
       cookie:
         same-site: none 
-        # CRITICAL FIX: Must be TRUE so browsers don't block the cross-domain cookie
         secure: true 
 
 app:
@@ -16,20 +15,10 @@ spring:
   application:
     name: neosis-backend
   
-  datasource:
-    url: ${DB_URL}
-    username: ${DB_USERNAME}
-    password: ${DB_PASSWORD}
-    driver-class-name: org.postgresql.Driver
-
-  jpa:
-    open-in-view: false 
-    hibernate:
-      ddl-auto: ${DDL_AUTO:update} 
-    show-sql: ${SHOW_SQL:false}    
-    properties:
-      hibernate:
-        format_sql: true
+  # CRITICAL FIX: MongoDB Connection String
+  data:
+    mongodb:
+      uri: ${MONGO_URI:mongodb://localhost:27017/neosis}
 
   security:
     oauth2:
