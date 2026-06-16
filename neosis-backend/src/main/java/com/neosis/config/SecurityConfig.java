@@ -67,7 +67,8 @@ public class SecurityConfig {
             .csrf(csrf -> csrf
                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                 .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
-                .ignoringRequestMatchers("/login/**", "/oauth2/**", "/ws/**") 
+                // CRITICAL FIX: Added "/api/**" so cross-domain POST requests bypass the strict CSRF block
+                .ignoringRequestMatchers("/login/**", "/oauth2/**", "/ws/**", "/api/**") 
             )
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
@@ -103,9 +104,12 @@ public class SecurityConfig {
                         HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, 
                         context
                     );
+                    // ====================================================================
+
                     response.sendRedirect(frontendUrl + "/chat");
                 })
             );
+
         return http.build();
     }
 }

@@ -107,7 +107,6 @@ function NeosisChatInner() {
   const [unreadCounts, setUnreadCounts] = useState({});
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') !== 'light');
   
-  // Server acts as the ultimate truth for T&C
   const [hasAcceptedTC, setHasAcceptedTC] = useState(true); 
 
   const [isRemoteTyping, setIsRemoteTyping] = useState(false);
@@ -456,14 +455,46 @@ function NeosisChatInner() {
     cleanupCallResources();
   };
 
+  // ==========================================
+  // CRITICAL FIX: Enhanced Error Parsing
+  // ==========================================
   const handleSendRequest = async (e) => { 
     e.preventDefault(); 
-    if (!addEmailInput || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addEmailInput)) { showToast("Invalid email.", "error"); return; } 
-    try { await api.post('/api/contacts/request', new URLSearchParams({ receiverEmail: addEmailInput })); setAddEmailInput(''); showToast("Request sent!"); } catch (err) { showToast("Failed to send.", "error"); } 
+    const email = addEmailInput.trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { 
+      showToast("Invalid email format.", "error"); 
+      return; 
+    } 
+    
+    try { 
+      const response = await api.post('/api/contacts/request', new URLSearchParams({ receiverEmail: email })); 
+      // Spring Boot returns text. Check if it's an error string wrapped in a 200 OK
+      if (typeof response.data === 'string' && (response.data.includes('Error') || response.data.includes('Forbidden'))) {
+        showToast(response.data, "error");
+      } else {
+        setAddEmailInput(''); 
+        showToast(response.data || "Request sent!"); 
+      }
+    } catch (err) { 
+      console.error("Add contact error:", err);
+      const errMsg = err.response?.data?.message || err.response?.data || "Network Error: Blocked by CORS/CSRF.";
+      showToast(typeof errMsg === 'string' ? errMsg : "Failed to send.", "error"); 
+    } 
   };
   
   const handleAcceptRequest = async (requestId) => { 
-    try { await api.post('/api/contacts/accept', new URLSearchParams({ requestId: requestId })); fetchSidebarData(); setShowNotifications(false); showToast("Accepted!"); } catch (err) { showToast("Failed to accept request", "error"); } 
+    try { 
+      const response = await api.post('/api/contacts/accept', new URLSearchParams({ requestId: requestId })); 
+      if (typeof response.data === 'string' && (response.data.includes('Error') || response.data.includes('Forbidden'))) {
+         showToast(response.data, "error");
+      } else {
+         fetchSidebarData(); 
+         setShowNotifications(false); 
+         showToast("Request Accepted!"); 
+      }
+    } catch (err) { 
+      showToast("Failed to accept request", "error"); 
+    } 
   };
   
   const handleOpenChat = async (friendEmail) => { 
@@ -704,6 +735,8 @@ function NeosisChatInner() {
                <div className="flex justify-start"><div className="w-64 h-16 bg-gray-100 dark:bg-[#232a28] rounded-2xl rounded-tl-sm animate-pulse"></div></div>
                <div className="flex justify-end"><div className="w-48 h-12 bg-gray-200 dark:bg-[#0fa384]/20 rounded-2xl rounded-br-sm animate-pulse"></div></div>
                <div className="flex justify-start"><div className="w-56 h-12 bg-gray-100 dark:bg-[#232a28] rounded-2xl rounded-tl-sm animate-pulse"></div></div>
+               <div className="flex justify-start"><div className="w-40 h-10 bg-gray-100 dark:bg-[#232a28] rounded-2xl rounded-tl-sm animate-pulse"></div></div>
+               <div className="flex justify-end"><div className="w-72 h-16 bg-gray-200 dark:bg-[#0fa384]/20 rounded-2xl rounded-br-sm animate-pulse"></div></div>
             </div>
             <div className="p-4 bg-white dark:bg-[#1a1f1d] border-t border-gray-200 dark:border-[#232a28]">
                <div className="w-full max-w-5xl mx-auto h-12 bg-gray-100 dark:bg-[#151817] rounded-xl animate-pulse"></div>
