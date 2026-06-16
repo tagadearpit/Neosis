@@ -9,6 +9,12 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+
+// CRITICAL IMPORTS FOR SESSION SAVING FIX
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
+
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
@@ -16,7 +22,6 @@ import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
-
 import org.springframework.security.oauth2.client.web.AuthorizationRequestRepository;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 
@@ -62,7 +67,6 @@ public class SecurityConfig {
             .csrf(csrf -> csrf
                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                 .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
-                // FIX: Removed "/api/**". CSRF tokens will now protect all mutations.
                 .ignoringRequestMatchers("/login/**", "/oauth2/**", "/ws/**") 
             )
             .authorizeHttpRequests(auth -> auth
@@ -87,10 +91,21 @@ public class SecurityConfig {
                         userRepository.save(newUser);
                     }
 
+                    // ====================================================================
+                    // CRITICAL FIX: Explicitly save the SecurityContext to the User Session
+                    // Without this, Spring Security 6 forgets you logged in after the redirect
+                    // ====================================================================
+                    SecurityContext context = SecurityContextHolder.createEmptyContext();
+                    context.setAuthentication(authentication);
+                    SecurityContextHolder.setContext(context);
+                    
+                    request.getSession(true).setAttribute(
+                        HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, 
+                        context
+                    );
                     response.sendRedirect(frontendUrl + "/chat");
                 })
             );
-
         return http.build();
     }
 }

@@ -4,8 +4,9 @@ server:
   servlet:
     session:
       cookie:
-        same-site: ${SESSION_COOKIE_SAME_SITE:none} 
-        secure: ${SESSION_COOKIE_SECURE:false}
+        same-site: none 
+        # CRITICAL FIX: Must be TRUE so browsers don't block the cross-domain cookie
+        secure: true 
 
 app:
   frontend:
