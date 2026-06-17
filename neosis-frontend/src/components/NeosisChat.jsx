@@ -70,12 +70,11 @@ const highlightText = (text, highlight) => {
   );
 };
 
-const fileToBase64 = (file) => new Promise((resolve, reject) => {
-  const reader = new FileReader();
-  reader.readAsDataURL(file);
-  reader.onload = () => resolve(reader.result);
-  reader.onerror = error => reject(error);
-});
+// URL Resolver helper for media fetched from the backend
+const resolveMediaUrl = (url) => {
+  if (!url) return '';
+  return url.startsWith('http') ? url : `${BACKEND_URL}${url}`;
+};
 
 const EMOJI_LIST = ["😀","😂","🤣","😊","🥰","😍","😒","😘","💕","😁","👍","🙌","✌️","✨","🔥","🎉","💯","💔","❤️","🥺","😎","🤔","🙄","😴","🤐","🤢","🤧","😷","🤯","🤠","🥳","🤫","🤭","🧐","🤓","😈","💀","👻","👽","🤖","👋","🤚","🖐","✋","🖖","👌","🤏","🤞","🤟","🤘","🤙","👈","👉","👆","👇","☝️","👍","👎","✊","👊","🤛","🤜","👏","🙌","👐","🤲","🤝","🙏","✍️","💅","🤳","💪","🦾","🦵","🦿","🦶","👣","👂","🦻","👃","🦼","🧠","🦷","🦴","👀","👁","👅","👄","💋","🩸"];
 
@@ -213,7 +212,7 @@ function NeosisChatInner() {
 
   const handleAcceptTerms = async () => {
     try {
-      await api.post('/api/users/accept-terms', null); // Empty body specified
+      await api.post('/api/users/accept-terms', null); 
       localStorage.setItem('neosis_tc_accepted', 'true');
       setHasAcceptedTC(true);
       showToast("Welcome to Neosis!", "success");
@@ -475,9 +474,6 @@ function NeosisChatInner() {
     cleanupCallResources();
   };
 
-  // ======================================================================
-  // CRITICAL FIX: Robust Axios POST with proper explicit URL Parameters
-  // ======================================================================
   const handleSendRequest = async (e) => { 
     e.preventDefault(); 
     const email = addEmailInput.trim();
@@ -488,7 +484,6 @@ function NeosisChatInner() {
     } 
     
     try { 
-      // Force null body and use the specific params object to ensure backend formatting
       const response = await api.post('/api/contacts/request', null, {
         params: { receiverEmail: email }
       }); 
@@ -573,8 +568,9 @@ function NeosisChatInner() {
     const file = e.target.files[0];
     if (!file) return;
     
-    if (file.size > 100 * 1024) { 
-      showToast("File too large for WebSocket Demo (Max 100KB). Implement /api/upload.", "error"); 
+    // Limits safely increased to 15MB 
+    if (file.size > 15 * 1024 * 1024) { 
+      showToast("File too large. Maximum size is 15MB.", "error"); 
       return; 
     }
     
@@ -598,6 +594,9 @@ function NeosisChatInner() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  // ==========================================
+  // CRITICAL FIX: Audio via MultiPart Upload
+  // ==========================================
   const startRecording = async () => {
     if (isRecordingRef.current) return; 
 
@@ -625,14 +624,30 @@ function NeosisChatInner() {
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
         if (stream) stream.getTracks().forEach(track => track.stop());
         
-        if (audioBlob.size > 100 * 1024) {
-          showToast("Recording too large for demo limits.", "error");
+        if (audioBlob.size > 15 * 1024 * 1024) {
+          showToast("Recording too large for limits.", "error");
           return;
         }
 
-        const base64Audio = await fileToBase64(audioBlob);
-        const sent = sendRichMessage('', 'AUDIO', base64Audio, recipientAtRecordStart);
-        if (!sent) showToast("Not connected. Voice note not sent.", "error");
+        try {
+          // HTTP UPLOAD
+          const formData = new FormData();
+          formData.append("file", audioBlob, "voicenote.webm");
+          
+          const uploadRes = await api.post('/api/chat/upload', formData, { 
+              headers: { 'Content-Type': 'multipart/form-data' } 
+          });
+          
+          const mediaUrl = uploadRes.data.url;
+          
+          // SIGNAL URL
+          const sent = sendRichMessage('', 'AUDIO', mediaUrl, recipientAtRecordStart);
+          if (!sent) showToast("Not connected. Voice note not routed.", "error");
+          
+        } catch (err) {
+          console.error(err);
+          showToast("Failed to upload voice note to cloud.", "error");
+        }
       };
 
       mediaRecorderRef.current.start();
@@ -688,6 +703,9 @@ function NeosisChatInner() {
     return true;
   };
 
+  // ==========================================
+  // CRITICAL FIX: Media via MultiPart Upload
+  // ==========================================
   const handleSendMessage = async (e) => {
     if (e) e.preventDefault();
     if (isSending || (newMessage.trim() === '' && !attachment)) return;
@@ -695,17 +713,27 @@ function NeosisChatInner() {
     setIsSending(true);
 
     try {
-      let base64Media = null;
+      let finalMediaUrl = null;
       let messageType = 'TEXT';
 
       if (attachment) {
-        base64Media = await fileToBase64(attachment);
+        // HTTP UPLOAD
+        const formData = new FormData();
+        formData.append("file", attachment);
+        
+        const uploadRes = await api.post('/api/chat/upload', formData, { 
+            headers: { 'Content-Type': 'multipart/form-data' } 
+        });
+        
+        finalMediaUrl = uploadRes.data.url;
+        
         if (attachment.type.startsWith('image/')) messageType = 'IMAGE';
         else if (attachment.type.startsWith('video/')) messageType = 'VIDEO';
         else messageType = 'DOCUMENT';
       }
 
-      const sent = sendRichMessage(newMessage.trim(), messageType, base64Media);
+      // SIGNAL URL
+      const sent = sendRichMessage(newMessage.trim(), messageType, finalMediaUrl);
       if (!sent) {
         showToast("Not connected. Message not sent.", "error");
         return;
@@ -717,7 +745,8 @@ function NeosisChatInner() {
       if (textareaRef.current) textareaRef.current.style.height = '48px';
       sendTypingStatus(false);
     } catch (err) {
-      showToast("Failed to process message.", "error");
+      console.error(err);
+      showToast("Media upload failed. Server rejected file.", "error");
     } finally {
       setIsSending(false);
     }
@@ -1080,12 +1109,13 @@ function NeosisChatInner() {
                           <div className={`flex flex-col max-w-[85%] md:max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
                             <div className={`px-4 py-2.5 text-[15px] leading-relaxed shadow-sm break-words ${isMe ? 'bg-[#0fa384] text-white rounded-2xl rounded-br-sm' : 'bg-gray-100 dark:bg-[#232a28] text-gray-900 dark:text-gray-200 rounded-2xl rounded-tl-sm transition-colors'}`}>
                               
-                              {msg.messageType === 'IMAGE' && <img src={msg.mediaData} alt="attachment" className="rounded-lg max-w-full h-auto mb-2 object-cover" />}
-                              {msg.messageType === 'VIDEO' && <video src={msg.mediaData} controls className="rounded-lg max-w-full h-auto mb-2" />}
-                              {msg.messageType === 'AUDIO' && <audio src={msg.mediaData} controls className="mb-2 max-w-[240px] h-10 rounded-full" />}
+                              {/* URLs are safely resolved for all media types */}
+                              {msg.messageType === 'IMAGE' && <img src={resolveMediaUrl(msg.mediaData)} alt="attachment" className="rounded-lg max-w-full h-auto mb-2 object-cover" />}
+                              {msg.messageType === 'VIDEO' && <video src={resolveMediaUrl(msg.mediaData)} controls className="rounded-lg max-w-full h-auto mb-2" />}
+                              {msg.messageType === 'AUDIO' && <audio src={resolveMediaUrl(msg.mediaData)} controls className="mb-2 max-w-[240px] h-10 rounded-full" />}
                               
                               {msg.messageType === 'DOCUMENT' && (
-                                <a href={msg.mediaData} download="Neosis_Document" className="flex items-center gap-2 mb-2 p-3 bg-black/20 rounded-xl hover:bg-black/30 transition-colors text-white border border-[#323d38] cursor-pointer no-underline">
+                                <a href={resolveMediaUrl(msg.mediaData)} download="Neosis_Document" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 mb-2 p-3 bg-black/20 rounded-xl hover:bg-black/30 transition-colors text-white border border-[#323d38] cursor-pointer no-underline">
                                   <FileText size={20} className="text-[#0fa384]"/>
                                   <span className="font-medium text-sm">Download Document</span>
                                 </a>
