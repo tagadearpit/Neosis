@@ -107,6 +107,7 @@ function NeosisChatInner() {
   const [unreadCounts, setUnreadCounts] = useState({});
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') !== 'light');
   
+  // Server acts as the ultimate truth for T&C
   const [hasAcceptedTC, setHasAcceptedTC] = useState(true); 
 
   const [isRemoteTyping, setIsRemoteTyping] = useState(false);
@@ -456,7 +457,8 @@ function NeosisChatInner() {
   };
 
   // ==========================================
-  // CRITICAL FIX: Enhanced Error Parsing
+  // CRITICAL FIX: Enhanced Request Handlers
+  // Uses URL parameters to bypass Axios Content-Type issues
   // ==========================================
   const handleSendRequest = async (e) => { 
     e.preventDefault(); 
@@ -467,8 +469,9 @@ function NeosisChatInner() {
     } 
     
     try { 
-      const response = await api.post('/api/contacts/request', new URLSearchParams({ receiverEmail: email })); 
-      // Spring Boot returns text. Check if it's an error string wrapped in a 200 OK
+      // Guaranteeing parameter transport via direct URL embedding
+      const response = await api.post(`/api/contacts/request?receiverEmail=${encodeURIComponent(email)}`); 
+      
       if (typeof response.data === 'string' && (response.data.includes('Error') || response.data.includes('Forbidden'))) {
         showToast(response.data, "error");
       } else {
@@ -477,14 +480,20 @@ function NeosisChatInner() {
       }
     } catch (err) { 
       console.error("Add contact error:", err);
-      const errMsg = err.response?.data?.message || err.response?.data || "Network Error: Blocked by CORS/CSRF.";
-      showToast(typeof errMsg === 'string' ? errMsg : "Failed to send.", "error"); 
+      let errMsg = "Failed to send request.";
+      if (err.response) {
+        errMsg = err.response.data?.message || err.response.data?.error || `Server Error ${err.response.status}`;
+        if (typeof err.response.data === 'string' && err.response.data.length < 100) errMsg = err.response.data;
+      } else if (err.message) {
+        errMsg = err.message;
+      }
+      showToast(errMsg, "error"); 
     } 
   };
   
   const handleAcceptRequest = async (requestId) => { 
     try { 
-      const response = await api.post('/api/contacts/accept', new URLSearchParams({ requestId: requestId })); 
+      const response = await api.post(`/api/contacts/accept?requestId=${encodeURIComponent(requestId)}`); 
       if (typeof response.data === 'string' && (response.data.includes('Error') || response.data.includes('Forbidden'))) {
          showToast(response.data, "error");
       } else {
@@ -493,7 +502,13 @@ function NeosisChatInner() {
          showToast("Request Accepted!"); 
       }
     } catch (err) { 
-      showToast("Failed to accept request", "error"); 
+      console.error("Accept contact error:", err);
+      let errMsg = "Failed to accept request.";
+      if (err.response) {
+        errMsg = err.response.data?.message || err.response.data?.error || `Server Error ${err.response.status}`;
+        if (typeof err.response.data === 'string' && err.response.data.length < 100) errMsg = err.response.data;
+      }
+      showToast(errMsg, "error"); 
     } 
   };
   
