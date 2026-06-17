@@ -41,6 +41,7 @@ public class ChatController {
         @Id
         public String id;
         public String contentType;
+        public String originalFilename; // CRITICAL FIX: Preserves the actual file name
         public byte[] data;
     }
 
@@ -55,6 +56,7 @@ public class ChatController {
             MediaFile media = new MediaFile();
             media.id = UUID.randomUUID().toString();
             media.contentType = file.getContentType();
+            media.originalFilename = file.getOriginalFilename(); // Capture the real name
             media.data = file.getBytes(); // Store as pure binary, no Base64 bloat
             
             mongoTemplate.save(media);
@@ -77,7 +79,12 @@ public class ChatController {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.parseMediaType(media.contentType));
-        // Adds cache-control so the browser doesn't re-download images repeatedly
+        
+        // Ensure the browser downloads the file with its original extension and name
+        String filename = media.originalFilename != null ? media.originalFilename : "Neosis_Document";
+        headers.setContentDispositionFormData("attachment", filename);
+        
+        // Adds cache-control so the browser doesn't re-download media repeatedly
         headers.setCacheControl("max-age=31536000"); 
         
         return new ResponseEntity<>(media.data, headers, HttpStatus.OK);
