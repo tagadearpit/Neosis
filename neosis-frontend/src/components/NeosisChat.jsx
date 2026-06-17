@@ -70,6 +70,13 @@ const highlightText = (text, highlight) => {
   );
 };
 
+const fileToBase64 = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.readAsDataURL(file);
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = error => reject(error);
+});
+
 // URL Resolver helper for media fetched from the backend
 const resolveMediaUrl = (url) => {
   if (!url) return '';
@@ -121,10 +128,12 @@ function NeosisChatInner() {
   
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+  
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const recordingTimerRef = useRef(null);
   const isRecordingRef = useRef(false); 
+  const startTimeRef = useRef(null); // Fix: Track exactly how long the user recorded
 
   const [callState, setCallState] = useState('idle'); 
   const [incomingCallData, setIncomingCallData] = useState(null);
@@ -568,7 +577,6 @@ function NeosisChatInner() {
     const file = e.target.files[0];
     if (!file) return;
     
-    // Limits safely increased to 15MB 
     if (file.size > 15 * 1024 * 1024) { 
       showToast("File too large. Maximum size is 15MB.", "error"); 
       return; 
@@ -595,7 +603,7 @@ function NeosisChatInner() {
   };
 
   // ==========================================
-  // CRITICAL FIX: Audio via MultiPart Upload
+  // CRITICAL FIX: Robust Voice Recording Path
   // ==========================================
   const startRecording = async () => {
     if (isRecordingRef.current) return; 
@@ -612,27 +620,39 @@ function NeosisChatInner() {
 
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/mp4';
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+        ? 'audio/webm;codecs=opus' 
+        : 'audio/mp4';
+        
       mediaRecorderRef.current = new MediaRecorder(stream, { mimeType });
       audioChunksRef.current = [];
+      startTimeRef.current = Date.now(); // Track exact duration
 
       mediaRecorderRef.current.ondataavailable = (e) => {
         if (e.data.size > 0) audioChunksRef.current.push(e.data);
       };
 
       mediaRecorderRef.current.onstop = async () => {
+        const durationMs = Date.now() - startTimeRef.current;
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
         if (stream) stream.getTracks().forEach(track => track.stop());
         
+        // Guard against zero-second mistaps or un-flushed blobs
+        if (audioBlob.size === 0 || durationMs < 500) {
+          showToast("Recording is too short or empty.", "error");
+          return;
+        }
+
         if (audioBlob.size > 15 * 1024 * 1024) {
           showToast("Recording too large for limits.", "error");
           return;
         }
 
         try {
-          // HTTP UPLOAD
+          // 1. HTTP UPLOAD
           const formData = new FormData();
-          formData.append("file", audioBlob, "voicenote.webm");
+          const fileExt = mimeType.includes('mp4') ? 'mp4' : 'webm';
+          formData.append("file", audioBlob, `voicenote.${fileExt}`);
           
           const uploadRes = await api.post('/api/chat/upload', formData, { 
               headers: { 'Content-Type': 'multipart/form-data' } 
@@ -640,7 +660,7 @@ function NeosisChatInner() {
           
           const mediaUrl = uploadRes.data.url;
           
-          // SIGNAL URL
+          // 2. SIGNAL URL
           const sent = sendRichMessage('', 'AUDIO', mediaUrl, recipientAtRecordStart);
           if (!sent) showToast("Not connected. Voice note not routed.", "error");
           
@@ -650,7 +670,8 @@ function NeosisChatInner() {
         }
       };
 
-      mediaRecorderRef.current.start();
+      // Force chunks every 1000ms to guarantee buffer flushes cleanly
+      mediaRecorderRef.current.start(1000); 
       setIsRecording(true);
       isRecordingRef.current = true; 
       setRecordingTime(0);
@@ -675,8 +696,8 @@ function NeosisChatInner() {
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecordingRef.current) {
       mediaRecorderRef.current.stop();
-      setIsRecording(false);
       isRecordingRef.current = false;
+      setIsRecording(false);
       clearInterval(recordingTimerRef.current);
     }
   };
@@ -703,9 +724,6 @@ function NeosisChatInner() {
     return true;
   };
 
-  // ==========================================
-  // CRITICAL FIX: Media via MultiPart Upload
-  // ==========================================
   const handleSendMessage = async (e) => {
     if (e) e.preventDefault();
     if (isSending || (newMessage.trim() === '' && !attachment)) return;
