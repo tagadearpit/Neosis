@@ -213,7 +213,7 @@ function NeosisChatInner() {
 
   const handleAcceptTerms = async () => {
     try {
-      await api.post('/api/users/accept-terms');
+      await api.post('/api/users/accept-terms', null); // Empty body specified
       localStorage.setItem('neosis_tc_accepted', 'true');
       setHasAcceptedTC(true);
       showToast("Welcome to Neosis!", "success");
@@ -223,7 +223,7 @@ function NeosisChatInner() {
   };
 
   const handleLogout = async () => {
-    try { await api.post('/logout'); } catch (err) {}
+    try { await api.post('/logout', null); } catch (err) {}
     window.location.href = '/login';
   };
 
@@ -475,52 +475,76 @@ function NeosisChatInner() {
     cleanupCallResources();
   };
 
+  // ======================================================================
+  // CRITICAL FIX: Robust Axios POST with proper explicit URL Parameters
+  // ======================================================================
   const handleSendRequest = async (e) => { 
     e.preventDefault(); 
     const email = addEmailInput.trim();
+    
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { 
       showToast("Invalid email format.", "error"); 
       return; 
     } 
     
     try { 
-      const response = await api.post(`/api/contacts/request?receiverEmail=${encodeURIComponent(email)}`); 
+      // Force null body and use the specific params object to ensure backend formatting
+      const response = await api.post('/api/contacts/request', null, {
+        params: { receiverEmail: email }
+      }); 
       
       if (typeof response.data === 'string' && (response.data.includes('Error') || response.data.includes('Forbidden'))) {
         showToast(response.data, "error");
       } else {
         setAddEmailInput(''); 
-        showToast(response.data || "Request sent!"); 
+        showToast(response.data || "Request sent!", "success"); 
       }
     } catch (err) { 
       console.error("Add contact error:", err);
       let errMsg = "Failed to send request.";
+      
       if (err.response) {
-        errMsg = err.response.data?.message || err.response.data?.error || `Server Error ${err.response.status}`;
-        if (typeof err.response.data === 'string' && err.response.data.length < 100) errMsg = err.response.data;
+        if (err.response.status === 403) {
+            errMsg = "403 Forbidden: Ensure your backend SecurityConfig has deployed.";
+        } else {
+            errMsg = err.response.data?.message || err.response.data?.error || `Server Error ${err.response.status}`;
+            if (typeof err.response.data === 'string' && err.response.data.length < 100) {
+                errMsg = err.response.data;
+            }
+        }
       } else if (err.message) {
         errMsg = err.message;
       }
+      
       showToast(errMsg, "error"); 
     } 
   };
   
   const handleAcceptRequest = async (requestId) => { 
     try { 
-      const response = await api.post(`/api/contacts/accept?requestId=${encodeURIComponent(requestId)}`); 
+      const response = await api.post('/api/contacts/accept', null, {
+        params: { requestId: requestId }
+      }); 
+      
       if (typeof response.data === 'string' && (response.data.includes('Error') || response.data.includes('Forbidden'))) {
          showToast(response.data, "error");
       } else {
          fetchSidebarData(); 
          setShowNotifications(false); 
-         showToast("Request Accepted!"); 
+         showToast("Request Accepted!", "success"); 
       }
     } catch (err) { 
       console.error("Accept contact error:", err);
       let errMsg = "Failed to accept request.";
       if (err.response) {
-        errMsg = err.response.data?.message || err.response.data?.error || `Server Error ${err.response.status}`;
-        if (typeof err.response.data === 'string' && err.response.data.length < 100) errMsg = err.response.data;
+        if (err.response.status === 403) {
+            errMsg = "403 Forbidden: Ensure your backend SecurityConfig has deployed.";
+        } else {
+            errMsg = err.response.data?.message || err.response.data?.error || `Server Error ${err.response.status}`;
+            if (typeof err.response.data === 'string' && err.response.data.length < 100) {
+                errMsg = err.response.data;
+            }
+        }
       }
       showToast(errMsg, "error"); 
     } 
@@ -549,12 +573,8 @@ function NeosisChatInner() {
     const file = e.target.files[0];
     if (!file) return;
     
-    // ==========================================================
-    // CRITICAL FIX: Increased Frontend Size Guard to 2MB
-    // Matches the new 5MB limits safely inside Spring Boot 
-    // ==========================================================
-    if (file.size > 2 * 1024 * 1024) { 
-      showToast("File too large. Maximum size is 2MB.", "error"); 
+    if (file.size > 100 * 1024) { 
+      showToast("File too large for WebSocket Demo (Max 100KB). Implement /api/upload.", "error"); 
       return; 
     }
     
@@ -605,9 +625,8 @@ function NeosisChatInner() {
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
         if (stream) stream.getTracks().forEach(track => track.stop());
         
-        // CRITICAL FIX: Voice note max size aligned with document limits
-        if (audioBlob.size > 2 * 1024 * 1024) {
-          showToast("Recording too large for limits.", "error");
+        if (audioBlob.size > 100 * 1024) {
+          showToast("Recording too large for demo limits.", "error");
           return;
         }
 
@@ -1065,9 +1084,6 @@ function NeosisChatInner() {
                               {msg.messageType === 'VIDEO' && <video src={msg.mediaData} controls className="rounded-lg max-w-full h-auto mb-2" />}
                               {msg.messageType === 'AUDIO' && <audio src={msg.mediaData} controls className="mb-2 max-w-[240px] h-10 rounded-full" />}
                               
-                              {/* ========================================================== */}
-                              {/* CRITICAL FIX: The Document is now a clickable link!        */}
-                              {/* ========================================================== */}
                               {msg.messageType === 'DOCUMENT' && (
                                 <a href={msg.mediaData} download="Neosis_Document" className="flex items-center gap-2 mb-2 p-3 bg-black/20 rounded-xl hover:bg-black/30 transition-colors text-white border border-[#323d38] cursor-pointer no-underline">
                                   <FileText size={20} className="text-[#0fa384]"/>
