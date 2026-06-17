@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 public class ChatMessage {
     
     @Id
-    private String id; // CRITICAL FIX: MongoDB uses String ObjectIDs
+    private String id; 
     
     private String senderEmail;
     private String recipientEmail;
@@ -18,6 +18,8 @@ public class ChatMessage {
     private String timestamp; 
 
     private String messageType = "TEXT"; 
+    
+    // CRITICAL UPDATE: This now safely stores the URL instead of the heavy Base64 string!
     private String mediaData;
 
     @CreatedDate
