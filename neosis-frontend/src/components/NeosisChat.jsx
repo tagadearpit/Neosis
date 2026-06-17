@@ -77,10 +77,8 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
   reader.onerror = error => reject(error);
 });
 
-// Composite keys applied during render to prevent duplicate collision
 const EMOJI_LIST = ["😀","😂","🤣","😊","🥰","😍","😒","😘","💕","😁","👍","🙌","✌️","✨","🔥","🎉","💯","💔","❤️","🥺","😎","🤔","🙄","😴","🤐","🤢","🤧","😷","🤯","🤠","🥳","🤫","🤭","🧐","🤓","😈","💀","👻","👽","🤖","👋","🤚","🖐","✋","🖖","👌","🤏","🤞","🤟","🤘","🤙","👈","👉","👆","👇","☝️","👍","👎","✊","👊","🤛","🤜","👏","🙌","👐","🤲","🤝","🙏","✍️","💅","🤳","💪","🦾","🦵","🦿","🦶","👣","👂","🦻","👃","🦼","🧠","🦷","🦴","👀","👁","👅","👄","💋","🩸"];
 
-// Ready for Dynamic TURN integration. Removed public credentials.
 const rtcConfiguration = {
   iceServers: [ 
     { urls: 'stun:stun.l.google.com:19302' }, 
@@ -107,7 +105,6 @@ function NeosisChatInner() {
   const [unreadCounts, setUnreadCounts] = useState({});
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') !== 'light');
   
-  // Server acts as the ultimate truth for T&C
   const [hasAcceptedTC, setHasAcceptedTC] = useState(true); 
 
   const [isRemoteTyping, setIsRemoteTyping] = useState(false);
@@ -151,6 +148,7 @@ function NeosisChatInner() {
   const remoteVideoRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
+  const remoteStreamRef = useRef(null);
   
   const callPeerEmailRef = useRef(null);
   const callStateRef = useRef(callState);
@@ -183,6 +181,12 @@ function NeosisChatInner() {
     if (showEmojiPicker) document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showEmojiPicker]);
+
+  useEffect(() => {
+    if (callState === 'in-call' && remoteVideoRef.current && remoteStreamRef.current) {
+        remoteVideoRef.current.srcObject = remoteStreamRef.current;
+    }
+  }, [callState, isVideoCall]);
 
   const fetchSidebarData = useCallback(async () => {
     try {
@@ -232,6 +236,7 @@ function NeosisChatInner() {
       localStreamRef.current.getTracks().forEach(track => track.stop()); 
       localStreamRef.current = null; 
     }
+    remoteStreamRef.current = null;
     iceCandidateQueueRef.current = []; 
     callPeerEmailRef.current = null;
     setCallState('idle'); 
@@ -401,7 +406,14 @@ function NeosisChatInner() {
       localStreamRef.current = stream;
       peerConnectionRef.current = new RTCPeerConnection(rtcConfiguration);
       stream.getTracks().forEach(track => peerConnectionRef.current.addTrack(track, stream));
-      peerConnectionRef.current.ontrack = (event) => { if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0]; };
+      
+      peerConnectionRef.current.ontrack = (event) => { 
+          remoteStreamRef.current = event.streams[0];
+          if (remoteVideoRef.current) {
+              remoteVideoRef.current.srcObject = event.streams[0]; 
+          }
+      };
+
       peerConnectionRef.current.onicecandidate = (event) => { if (event.candidate) sendWebRTCSignal({ type: 'ice-candidate', candidate: event.candidate, recipientEmail: activeChat }); };
       const offer = await peerConnectionRef.current.createOffer();
       await peerConnectionRef.current.setLocalDescription(offer);
@@ -430,7 +442,14 @@ function NeosisChatInner() {
       localStreamRef.current = stream;
       peerConnectionRef.current = new RTCPeerConnection(rtcConfiguration);
       stream.getTracks().forEach(track => peerConnectionRef.current.addTrack(track, stream));
-      peerConnectionRef.current.ontrack = (event) => { if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0]; };
+      
+      peerConnectionRef.current.ontrack = (event) => { 
+          remoteStreamRef.current = event.streams[0];
+          if (remoteVideoRef.current) {
+              remoteVideoRef.current.srcObject = event.streams[0]; 
+          }
+      };
+
       peerConnectionRef.current.onicecandidate = (event) => { if (event.candidate) sendWebRTCSignal({ type: 'ice-candidate', candidate: event.candidate, recipientEmail: senderEmail }); };
       
       await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
@@ -456,10 +475,6 @@ function NeosisChatInner() {
     cleanupCallResources();
   };
 
-  // ==========================================
-  // CRITICAL FIX: Enhanced Request Handlers
-  // Uses URL parameters to bypass Axios Content-Type issues
-  // ==========================================
   const handleSendRequest = async (e) => { 
     e.preventDefault(); 
     const email = addEmailInput.trim();
@@ -469,7 +484,6 @@ function NeosisChatInner() {
     } 
     
     try { 
-      // Guaranteeing parameter transport via direct URL embedding
       const response = await api.post(`/api/contacts/request?receiverEmail=${encodeURIComponent(email)}`); 
       
       if (typeof response.data === 'string' && (response.data.includes('Error') || response.data.includes('Forbidden'))) {
@@ -535,8 +549,12 @@ function NeosisChatInner() {
     const file = e.target.files[0];
     if (!file) return;
     
-    if (file.size > 100 * 1024) { 
-      showToast("File too large for WebSocket Demo (Max 100KB). Implement /api/upload.", "error"); 
+    // ==========================================================
+    // CRITICAL FIX: Increased Frontend Size Guard to 2MB
+    // Matches the new 5MB limits safely inside Spring Boot 
+    // ==========================================================
+    if (file.size > 2 * 1024 * 1024) { 
+      showToast("File too large. Maximum size is 2MB.", "error"); 
       return; 
     }
     
@@ -587,8 +605,9 @@ function NeosisChatInner() {
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
         if (stream) stream.getTracks().forEach(track => track.stop());
         
-        if (audioBlob.size > 100 * 1024) {
-          showToast("Recording too large for demo limits.", "error");
+        // CRITICAL FIX: Voice note max size aligned with document limits
+        if (audioBlob.size > 2 * 1024 * 1024) {
+          showToast("Recording too large for limits.", "error");
           return;
         }
 
@@ -1045,7 +1064,16 @@ function NeosisChatInner() {
                               {msg.messageType === 'IMAGE' && <img src={msg.mediaData} alt="attachment" className="rounded-lg max-w-full h-auto mb-2 object-cover" />}
                               {msg.messageType === 'VIDEO' && <video src={msg.mediaData} controls className="rounded-lg max-w-full h-auto mb-2" />}
                               {msg.messageType === 'AUDIO' && <audio src={msg.mediaData} controls className="mb-2 max-w-[240px] h-10 rounded-full" />}
-                              {msg.messageType === 'DOCUMENT' && <div className="flex items-center gap-2 mb-2 p-2 bg-black/10 rounded-lg"><FileText size={20}/> Document Attached</div>}
+                              
+                              {/* ========================================================== */}
+                              {/* CRITICAL FIX: The Document is now a clickable link!        */}
+                              {/* ========================================================== */}
+                              {msg.messageType === 'DOCUMENT' && (
+                                <a href={msg.mediaData} download="Neosis_Document" className="flex items-center gap-2 mb-2 p-3 bg-black/20 rounded-xl hover:bg-black/30 transition-colors text-white border border-[#323d38] cursor-pointer no-underline">
+                                  <FileText size={20} className="text-[#0fa384]"/>
+                                  <span className="font-medium text-sm">Download Document</span>
+                                </a>
+                              )}
 
                               {isSearching && searchQuery && rawContent ? highlightText(rawContent, searchQuery) : rawContent}
                             </div>
