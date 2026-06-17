@@ -14,6 +14,15 @@ app:
 spring:
   application:
     name: neosis-backend
+    
+  # ==========================================================
+  # CRITICAL FIX: Bypass Tomcat's default 1MB upload limit
+  # This allows the backend to accept your 15MB file payloads
+  # ==========================================================
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 25MB
   
   # CRITICAL FIX: MongoDB Connection String
   data:
