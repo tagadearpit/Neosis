@@ -31,14 +31,11 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                 .withSockJS(); 
     }
 
-    // ==========================================================
-    // CRITICAL FIX: Overriding the default 64KB WebSocket limit
-    // Allows Base64 documents and media up to 5MB to pass safely
-    // ==========================================================
     @Override
     public void configureWebSocketTransport(WebSocketTransportRegistration registration) {
-        registration.setMessageSizeLimit(5 * 1024 * 1024); // 5MB
-        registration.setSendBufferSizeLimit(5 * 1024 * 1024); // 5MB
+        // Safe standard limits. Media is now handled efficiently by the HTTP REST endpoints.
+        registration.setMessageSizeLimit(512 * 1024); 
+        registration.setSendBufferSizeLimit(512 * 1024); 
         registration.setSendTimeLimit(20000); 
     }
 }
