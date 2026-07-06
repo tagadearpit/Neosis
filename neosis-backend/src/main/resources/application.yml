@@ -1,0 +1,52 @@
+server:
+  port: 8080
+  forward-headers-strategy: framework 
+  servlet:
+    session:
+      cookie:
+        same-site: none 
+        secure: true 
+
+app:
+  frontend:
+    url: ${FRONTEND_URL:https://neosis-static-site.onrender.com}
+
+spring:
+  application:
+    name: neosis-backend
+    
+  # ==========================================================
+  # CRITICAL FIX: Bypass Tomcat's default 1MB upload limit
+  # This allows the backend to accept your 15MB file payloads
+  # ==========================================================
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 25MB
+  
+  # CRITICAL FIX: MongoDB Connection String
+  data:
+    mongodb:
+      uri: ${MONGO_URI:mongodb://localhost:27017/neosis}
+      auto-index-creation: true
+
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_CLIENT_ID}
+            client-secret: ${GOOGLE_CLIENT_SECRET}
+            scope:
+              - email
+              - profile
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
