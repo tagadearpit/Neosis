@@ -61,7 +61,6 @@ const highlightText = (text, highlight) => {
   );
 };
 
-// URL Resolver helper for media fetched from the backend
 const resolveMediaUrl = (url) => {
   if (!url) return '';
   return url.startsWith('http') ? url : `${BACKEND_URL}${url}`;
@@ -102,7 +101,7 @@ function NeosisChatInner() {
   const [unreadCounts, setUnreadCounts] = useState({});
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') !== 'light');
   
-  const [hasAcceptedTC, setHasAcceptedTC] = useState(false); 
+  const [hasAcceptedTC, setHasAcceptedTC] = useState(false);
 
   const [isRemoteTyping, setIsRemoteTyping] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -124,7 +123,7 @@ function NeosisChatInner() {
   const audioChunksRef = useRef([]);
   const recordingTimerRef = useRef(null);
   const isRecordingRef = useRef(false); 
-  const startTimeRef = useRef(null); // Fix: Track exactly how long the user recorded
+  const startTimeRef = useRef(null);
 
   const [callState, setCallState] = useState('idle'); 
   const [incomingCallData, setIncomingCallData] = useState(null);
@@ -184,7 +183,7 @@ function NeosisChatInner() {
 
   useEffect(() => {
     if (callState === 'in-call' && remoteVideoRef.current && remoteStreamRef.current) {
-        remoteVideoRef.current.srcObject = remoteStreamRef.current;
+      remoteVideoRef.current.srcObject = remoteStreamRef.current;
     }
   }, [callState, isVideoCall]);
 
@@ -213,11 +212,24 @@ function NeosisChatInner() {
 
   const handleAcceptTerms = async () => {
     try {
-      await api.post('/api/users/accept-terms', null); 
+      const csrfRes = await api.get('/api/csrf');
+      const csrf = csrfRes?.data;
+
+      await api.post(
+        '/api/users/accept-terms',
+        {},
+        {
+          headers: {
+            [csrf?.headerName || 'X-XSRF-TOKEN']: csrf?.token
+          }
+        }
+      );
+
       localStorage.setItem('neosis_tc_accepted', 'true');
       setHasAcceptedTC(true);
       showToast("Welcome to Neosis!", "success");
     } catch (err) {
+      console.error('Accept terms failed:', err?.response?.status, err?.response?.data);
       showToast("Network Error: Could not verify identity.", "error");
     }
   };
@@ -298,10 +310,10 @@ function NeosisChatInner() {
             if (!friendsRef.current.includes(data.senderEmail)) return;
 
             if (callStateRef.current !== 'idle') {
-               if (stompClientRef.current && stompClientRef.current.connected) {
-                 stompClientRef.current.publish({ destination: '/app/chat.signal', body: JSON.stringify({ type: 'call-rejected', reason: 'busy', recipientEmail: data.senderEmail }) });
-               }
-               return; 
+              if (stompClientRef.current && stompClientRef.current.connected) {
+                stompClientRef.current.publish({ destination: '/app/chat.signal', body: JSON.stringify({ type: 'call-rejected', reason: 'busy', recipientEmail: data.senderEmail }) });
+              }
+              return; 
             }
             callPeerEmailRef.current = data.senderEmail;
             setIncomingCallData(data); 
@@ -408,10 +420,10 @@ function NeosisChatInner() {
       stream.getTracks().forEach(track => peerConnectionRef.current.addTrack(track, stream));
       
       peerConnectionRef.current.ontrack = (event) => { 
-          remoteStreamRef.current = event.streams[0];
-          if (remoteVideoRef.current) {
-              remoteVideoRef.current.srcObject = event.streams[0]; 
-          }
+        remoteStreamRef.current = event.streams[0];
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = event.streams[0]; 
+        }
       };
 
       peerConnectionRef.current.onicecandidate = (event) => { if (event.candidate) sendWebRTCSignal({ type: 'ice-candidate', candidate: event.candidate, recipientEmail: activeChat }); };
@@ -436,7 +448,8 @@ function NeosisChatInner() {
     }
 
     try {
-      setIsVideoCall(isVideo); setCallState('in-call');
+      setIsVideoCall(isVideo); 
+      setCallState('in-call');
       const stream = await navigator.mediaDevices.getUserMedia({ video: isVideo, audio: true });
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       localStreamRef.current = stream;
@@ -444,10 +457,10 @@ function NeosisChatInner() {
       stream.getTracks().forEach(track => peerConnectionRef.current.addTrack(track, stream));
       
       peerConnectionRef.current.ontrack = (event) => { 
-          remoteStreamRef.current = event.streams[0];
-          if (remoteVideoRef.current) {
-              remoteVideoRef.current.srcObject = event.streams[0]; 
-          }
+        remoteStreamRef.current = event.streams[0];
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = event.streams[0]; 
+        }
       };
 
       peerConnectionRef.current.onicecandidate = (event) => { if (event.candidate) sendWebRTCSignal({ type: 'ice-candidate', candidate: event.candidate, recipientEmail: senderEmail }); };
@@ -456,21 +469,24 @@ function NeosisChatInner() {
       
       while (iceCandidateQueueRef.current.length > 0) {
         if (peerConnectionRef.current && peerConnectionRef.current.signalingState !== 'closed') {
-           await peerConnectionRef.current.addIceCandidate(iceCandidateQueueRef.current.shift());
+          await peerConnectionRef.current.addIceCandidate(iceCandidateQueueRef.current.shift());
         } else {
-           iceCandidateQueueRef.current = [];
+          iceCandidateQueueRef.current = [];
         }
       }
 
       const answer = await peerConnectionRef.current.createAnswer();
       await peerConnectionRef.current.setLocalDescription(answer);
       sendWebRTCSignal({ type: 'answer', sdp: answer, recipientEmail: senderEmail });
-    } catch (err) { showToast("Camera/Mic access denied", "error"); handleRejectCall(); }
+    } catch (err) { 
+      showToast("Camera/Mic access denied", "error"); 
+      handleRejectCall(); 
+    }
   };
 
   const handleRejectCall = () => { 
     if (incomingCallDataRef.current) {
-        sendWebRTCSignal({ type: 'end-call', recipientEmail: incomingCallDataRef.current.senderEmail }); 
+      sendWebRTCSignal({ type: 'end-call', recipientEmail: incomingCallDataRef.current.senderEmail }); 
     }
     cleanupCallResources();
   };
@@ -485,8 +501,14 @@ function NeosisChatInner() {
     } 
     
     try { 
+      const csrfRes = await api.get('/api/csrf');
+      const csrf = csrfRes?.data;
+
       const response = await api.post('/api/contacts/request', null, {
-        params: { receiverEmail: email }
+        params: { receiverEmail: email },
+        headers: {
+          [csrf?.headerName || 'X-XSRF-TOKEN']: csrf?.token
+        }
       }); 
       
       if (typeof response.data === 'string' && (response.data.includes('Error') || response.data.includes('Forbidden'))) {
@@ -501,12 +523,12 @@ function NeosisChatInner() {
       
       if (err.response) {
         if (err.response.status === 403) {
-            errMsg = "403 Forbidden: Ensure your backend SecurityConfig has deployed.";
+          errMsg = "403 Forbidden: CSRF or auth validation failed.";
         } else {
-            errMsg = err.response.data?.message || err.response.data?.error || `Server Error ${err.response.status}`;
-            if (typeof err.response.data === 'string' && err.response.data.length < 100) {
-                errMsg = err.response.data;
-            }
+          errMsg = err.response.data?.message || err.response.data?.error || `Server Error ${err.response.status}`;
+          if (typeof err.response.data === 'string' && err.response.data.length < 100) {
+            errMsg = err.response.data;
+          }
         }
       } else if (err.message) {
         errMsg = err.message;
@@ -517,29 +539,35 @@ function NeosisChatInner() {
   };
   
   const handleAcceptRequest = async (requestId) => { 
-    try { 
+    try {
+      const csrfRes = await api.get('/api/csrf');
+      const csrf = csrfRes?.data;
+
       const response = await api.post('/api/contacts/accept', null, {
-        params: { requestId: requestId }
+        params: { requestId: requestId },
+        headers: {
+          [csrf?.headerName || 'X-XSRF-TOKEN']: csrf?.token
+        }
       }); 
       
       if (typeof response.data === 'string' && (response.data.includes('Error') || response.data.includes('Forbidden'))) {
-         showToast(response.data, "error");
+        showToast(response.data, "error");
       } else {
-         fetchSidebarData(); 
-         setShowNotifications(false); 
-         showToast("Request Accepted!", "success"); 
+        fetchSidebarData(); 
+        setShowNotifications(false); 
+        showToast("Request Accepted!", "success"); 
       }
     } catch (err) { 
       console.error("Accept contact error:", err);
       let errMsg = "Failed to accept request.";
       if (err.response) {
         if (err.response.status === 403) {
-            errMsg = "403 Forbidden: Ensure your backend SecurityConfig has deployed.";
+          errMsg = "403 Forbidden: CSRF or auth validation failed.";
         } else {
-            errMsg = err.response.data?.message || err.response.data?.error || `Server Error ${err.response.status}`;
-            if (typeof err.response.data === 'string' && err.response.data.length < 100) {
-                errMsg = err.response.data;
-            }
+          errMsg = err.response.data?.message || err.response.data?.error || `Server Error ${err.response.status}`;
+          if (typeof err.response.data === 'string' && err.response.data.length < 100) {
+            errMsg = err.response.data;
+          }
         }
       }
       showToast(errMsg, "error"); 
@@ -559,7 +587,10 @@ function NeosisChatInner() {
     setAttachmentPreview(null);
     if (remoteTypingTimeoutRef.current) clearTimeout(remoteTypingTimeoutRef.current);
 
-    setIsChatLoading(true); setIsSearching(false); setSearchQuery(''); setShowMoreMenu(false); 
+    setIsChatLoading(true); 
+    setIsSearching(false); 
+    setSearchQuery(''); 
+    setShowMoreMenu(false); 
     try { 
       const historyRes = await api.get(`/api/messages/history/${friendEmail}`, { params: { limit: 50 } }); 
       if (latestHistoryRequestRef.current !== requestId) return;
@@ -605,9 +636,6 @@ function NeosisChatInner() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // ==========================================
-  // CRITICAL FIX: Robust Voice Recording Path
-  // ==========================================
   const startRecording = async () => {
     if (isRecordingRef.current) return; 
 
@@ -629,7 +657,7 @@ function NeosisChatInner() {
         
       mediaRecorderRef.current = new MediaRecorder(stream, { mimeType });
       audioChunksRef.current = [];
-      startTimeRef.current = Date.now(); // Track exact duration
+      startTimeRef.current = Date.now();
 
       mediaRecorderRef.current.ondataavailable = (e) => {
         if (e.data.size > 0) audioChunksRef.current.push(e.data);
@@ -640,7 +668,6 @@ function NeosisChatInner() {
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
         if (stream) stream.getTracks().forEach(track => track.stop());
         
-        // Guard against zero-second mistaps or un-flushed blobs
         if (audioBlob.size === 0 || durationMs < 500) {
           showToast("Recording is too short or empty.", "error");
           return;
@@ -652,19 +679,22 @@ function NeosisChatInner() {
         }
 
         try {
-          // 1. HTTP UPLOAD
+          const csrfRes = await api.get('/api/csrf');
+          const csrf = csrfRes?.data;
+
           const formData = new FormData();
           const fileExt = mimeType.includes('mp4') ? 'mp4' : 'webm';
           formData.append("file", audioBlob, `voicenote.${fileExt}`);
-          
           formData.append('recipientEmail', recipientAtRecordStart);
+          
           const uploadRes = await api.post('/api/chat/upload', formData, { 
-              headers: { 'Content-Type': 'multipart/form-data' } 
+            headers: { 
+              'Content-Type': 'multipart/form-data',
+              [csrf?.headerName || 'X-XSRF-TOKEN']: csrf?.token
+            } 
           });
           
           const mediaUrl = uploadRes.data.url;
-          
-          // 2. SIGNAL URL
           const sent = sendRichMessage('', 'AUDIO', mediaUrl, recipientAtRecordStart);
           if (!sent) showToast("Not connected. Voice note not routed.", "error");
           
@@ -674,7 +704,6 @@ function NeosisChatInner() {
         }
       };
 
-      // Force chunks every 1000ms to guarantee buffer flushes cleanly
       mediaRecorderRef.current.start(1000); 
       setIsRecording(true);
       isRecordingRef.current = true; 
@@ -739,13 +768,18 @@ function NeosisChatInner() {
       let messageType = 'TEXT';
 
       if (attachment) {
-        // HTTP UPLOAD
+        const csrfRes = await api.get('/api/csrf');
+        const csrf = csrfRes?.data;
+
         const formData = new FormData();
         formData.append("file", attachment);
-        
         formData.append('recipientEmail', activeChatRef.current);
+
         const uploadRes = await api.post('/api/chat/upload', formData, { 
-            headers: { 'Content-Type': 'multipart/form-data' } 
+          headers: { 
+            'Content-Type': 'multipart/form-data',
+            [csrf?.headerName || 'X-XSRF-TOKEN']: csrf?.token
+          } 
         });
         
         finalMediaUrl = uploadRes.data.url;
@@ -755,7 +789,6 @@ function NeosisChatInner() {
         else messageType = 'DOCUMENT';
       }
 
-      // SIGNAL URL
       const sent = sendRichMessage(newMessage.trim(), messageType, finalMediaUrl);
       if (!sent) {
         showToast("Not connected. Message not sent.", "error");
@@ -775,7 +808,10 @@ function NeosisChatInner() {
     }
   };
 
-  const sendTypingStatus = (isTyping) => { if (!stompClientRef.current || !stompClientRef.current.connected || !activeChatRef.current || !currentUserRef.current) return; stompClientRef.current.publish({ destination: '/app/chat.typing', body: JSON.stringify({ senderEmail: currentUserRef.current.email, recipientEmail: activeChatRef.current, isTyping: isTyping.toString() }) }); };
+  const sendTypingStatus = (isTyping) => {
+    if (!stompClientRef.current || !stompClientRef.current.connected || !activeChatRef.current || !currentUserRef.current) return;
+    stompClientRef.current.publish({ destination: '/app/chat.typing', body: JSON.stringify({ senderEmail: currentUserRef.current.email, recipientEmail: activeChatRef.current, isTyping: isTyping.toString() }) });
+  };
   
   const handleInputChange = (e) => { 
     e.target.style.height = '48px'; 
@@ -798,53 +834,53 @@ function NeosisChatInner() {
         <div className="w-full max-w-7xl mx-auto rounded-3xl shadow-2xl overflow-hidden flex h-full border border-gray-200 dark:border-[#323d38] relative z-10 bg-white dark:bg-[#111313]">
           <div className="hidden md:flex w-[350px] bg-slate-50 dark:bg-[#1a1f1d] flex-col flex-shrink-0 z-20 border-r border-gray-200 dark:border-[#232a28]">
             <div className="p-4 flex justify-between items-center border-b border-gray-200 dark:border-[#232a28]">
-               <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
-                  <div className="w-20 h-5 bg-gray-200 dark:bg-[#232a28] rounded animate-pulse"></div>
-               </div>
-               <div className="flex gap-2">
-                  <div className="w-8 h-8 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
-                  <div className="w-8 h-8 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
-               </div>
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
+                <div className="w-20 h-5 bg-gray-200 dark:bg-[#232a28] rounded animate-pulse"></div>
+              </div>
+              <div className="flex gap-2">
+                <div className="w-8 h-8 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
+                <div className="w-8 h-8 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
+              </div>
             </div>
             <div className="p-4 border-b border-gray-200 dark:border-[#232a28]">
-               <div className="w-full h-10 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
+              <div className="w-full h-10 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
             </div>
             <div className="flex-1 p-2 space-y-2">
-               {[1,2,3,4,5].map(i => (
-                 <div key={i} className="flex items-center gap-3.5 p-3">
-                   <div className="w-12 h-12 bg-gray-200 dark:bg-[#232a28] rounded-full animate-pulse shrink-0"></div>
-                   <div className="flex-1 space-y-2">
-                     <div className="w-24 h-4 bg-gray-200 dark:bg-[#232a28] rounded animate-pulse"></div>
-                     <div className="w-32 h-3 bg-gray-200 dark:bg-[#232a28] rounded animate-pulse"></div>
-                   </div>
-                 </div>
-               ))}
+              {[1,2,3,4,5].map(i => (
+                <div key={i} className="flex items-center gap-3.5 p-3">
+                  <div className="w-12 h-12 bg-gray-200 dark:bg-[#232a28] rounded-full animate-pulse shrink-0"></div>
+                  <div className="flex-1 space-y-2">
+                    <div className="w-24 h-4 bg-gray-200 dark:bg-[#232a28] rounded animate-pulse"></div>
+                    <div className="w-32 h-3 bg-gray-200 dark:bg-[#232a28] rounded animate-pulse"></div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
           <div className="flex-1 flex flex-col bg-white dark:bg-[#111313]">
             <div className="px-6 py-4 bg-white dark:bg-[#1a1f1d] border-b border-gray-200 dark:border-[#232a28] flex items-center justify-between">
-               <div className="flex items-center gap-4">
-                  <div className="w-11 h-11 bg-gray-200 dark:bg-[#232a28] rounded-full animate-pulse"></div>
-                  <div className="space-y-2">
-                    <div className="w-28 h-4 bg-gray-200 dark:bg-[#232a28] rounded animate-pulse"></div>
-                    <div className="w-16 h-3 bg-gray-200 dark:bg-[#232a28] rounded animate-pulse"></div>
-                  </div>
-               </div>
-               <div className="flex gap-2">
-                  <div className="w-8 h-8 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
-                  <div className="w-8 h-8 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
-               </div>
+              <div className="flex items-center gap-4">
+                <div className="w-11 h-11 bg-gray-200 dark:bg-[#232a28] rounded-full animate-pulse"></div>
+                <div className="space-y-2">
+                  <div className="w-28 h-4 bg-gray-200 dark:bg-[#232a28] rounded animate-pulse"></div>
+                  <div className="w-16 h-3 bg-gray-200 dark:bg-[#232a28] rounded animate-pulse"></div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <div className="w-8 h-8 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
+                <div className="w-8 h-8 bg-gray-200 dark:bg-[#232a28] rounded-lg animate-pulse"></div>
+              </div>
             </div>
             <div className="flex-1 p-6 space-y-6">
-               <div className="flex justify-start"><div className="w-64 h-16 bg-gray-100 dark:bg-[#232a28] rounded-2xl rounded-tl-sm animate-pulse"></div></div>
-               <div className="flex justify-end"><div className="w-48 h-12 bg-gray-200 dark:bg-[#0fa384]/20 rounded-2xl rounded-br-sm animate-pulse"></div></div>
-               <div className="flex justify-start"><div className="w-56 h-12 bg-gray-100 dark:bg-[#232a28] rounded-2xl rounded-tl-sm animate-pulse"></div></div>
-               <div className="flex justify-start"><div className="w-40 h-10 bg-gray-100 dark:bg-[#232a28] rounded-2xl rounded-tl-sm animate-pulse"></div></div>
-               <div className="flex justify-end"><div className="w-72 h-16 bg-gray-200 dark:bg-[#0fa384]/20 rounded-2xl rounded-br-sm animate-pulse"></div></div>
+              <div className="flex justify-start"><div className="w-64 h-16 bg-gray-100 dark:bg-[#232a28] rounded-2xl rounded-tl-sm animate-pulse"></div></div>
+              <div className="flex justify-end"><div className="w-48 h-12 bg-gray-200 dark:bg-[#0fa384]/20 rounded-2xl rounded-br-sm animate-pulse"></div></div>
+              <div className="flex justify-start"><div className="w-56 h-12 bg-gray-100 dark:bg-[#232a28] rounded-2xl rounded-tl-sm animate-pulse"></div></div>
+              <div className="flex justify-start"><div className="w-40 h-10 bg-gray-100 dark:bg-[#232a28] rounded-2xl rounded-tl-sm animate-pulse"></div></div>
+              <div className="flex justify-end"><div className="w-72 h-16 bg-gray-200 dark:bg-[#0fa384]/20 rounded-2xl rounded-br-sm animate-pulse"></div></div>
             </div>
             <div className="p-4 bg-white dark:bg-[#1a1f1d] border-t border-gray-200 dark:border-[#232a28]">
-               <div className="w-full max-w-5xl mx-auto h-12 bg-gray-100 dark:bg-[#151817] rounded-xl animate-pulse"></div>
+              <div className="w-full max-w-5xl mx-auto h-12 bg-gray-100 dark:bg-[#151817] rounded-xl animate-pulse"></div>
             </div>
           </div>
         </div>
@@ -1043,7 +1079,7 @@ function NeosisChatInner() {
                     </div>
                   </div>
                 </motion.div>
-              )
+              );
             })}
             {friends.length === 0 && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-10 flex flex-col items-center justify-center text-gray-500 text-center px-6">
@@ -1132,7 +1168,6 @@ function NeosisChatInner() {
                           <div className={`flex flex-col max-w-[85%] md:max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
                             <div className={`px-4 py-2.5 text-[15px] leading-relaxed shadow-sm break-words ${isMe ? 'bg-[#0fa384] text-white rounded-2xl rounded-br-sm' : 'bg-gray-100 dark:bg-[#232a28] text-gray-900 dark:text-gray-200 rounded-2xl rounded-tl-sm transition-colors'}`}>
                               
-                              {/* URLs are safely resolved for all media types */}
                               {msg.messageType === 'IMAGE' && <img src={resolveMediaUrl(msg.mediaData)} alt="attachment" className="rounded-lg max-w-full h-auto mb-2 object-cover" />}
                               {msg.messageType === 'VIDEO' && <video src={resolveMediaUrl(msg.mediaData)} controls className="rounded-lg max-w-full h-auto mb-2" />}
                               {msg.messageType === 'AUDIO' && <audio src={resolveMediaUrl(msg.mediaData)} controls className="mb-2 max-w-[240px] h-10 rounded-full" />}
@@ -1164,11 +1199,11 @@ function NeosisChatInner() {
                 {attachmentPreview && (
                   <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="absolute bottom-24 left-4 right-4 bg-white dark:bg-[#1a1f1d] border border-gray-200 dark:border-[#323d38] p-3 rounded-xl shadow-2xl z-30 flex items-center gap-4">
                     {attachmentPreview === 'DOCUMENT' ? (
-                       <div className="w-16 h-16 bg-gray-100 dark:bg-[#232a28] rounded-lg flex items-center justify-center"><FileText className="text-gray-500" /></div>
+                      <div className="w-16 h-16 bg-gray-100 dark:bg-[#232a28] rounded-lg flex items-center justify-center"><FileText className="text-gray-500" /></div>
                     ) : attachmentPreview === 'VIDEO' ? (
-                       <div className="w-16 h-16 bg-gray-100 dark:bg-[#232a28] rounded-lg flex items-center justify-center"><Video className="text-gray-500" /></div>
+                      <div className="w-16 h-16 bg-gray-100 dark:bg-[#232a28] rounded-lg flex items-center justify-center"><Video className="text-gray-500" /></div>
                     ) : (
-                       <img src={attachmentPreview} alt="Preview" className="w-16 h-16 object-cover rounded-lg border border-gray-200 dark:border-[#323d38]" />
+                      <img src={attachmentPreview} alt="Preview" className="w-16 h-16 object-cover rounded-lg border border-gray-200 dark:border-[#323d38]" />
                     )}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-gray-900 dark:text-white truncate">{attachment.name}</p>
@@ -1192,7 +1227,6 @@ function NeosisChatInner() {
               </AnimatePresence>
 
               <div className="p-4 bg-white dark:bg-[#1a1f1d] border-t border-gray-200 dark:border-[#232a28] z-20 transition-colors">
-                
                 {isRecording ? (
                   <div className="flex items-center gap-4 max-w-5xl mx-auto w-full bg-rose-500/10 border border-rose-500/20 rounded-xl px-4 py-3">
                     <div className="w-3 h-3 bg-rose-500 rounded-full animate-ping"></div>
@@ -1230,5 +1264,5 @@ export default function NeosisChatWrapped() {
     <ChatErrorBoundary>
       <NeosisChatInner />
     </ChatErrorBoundary>
-  )
+  );
 }
