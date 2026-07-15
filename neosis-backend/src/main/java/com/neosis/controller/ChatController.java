@@ -2,13 +2,11 @@ package com.neosis.controller;
 
 import com.mongodb.client.gridfs.model.GridFSFile;
 import com.neosis.model.ChatMessage;
-import com.neosis.model.ChatRequest;
 import com.neosis.repository.ChatMessageRepository;
 import com.neosis.repository.ChatRequestRepository;
 import com.neosis.repository.UserRepository;
 
 import org.bson.Document;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -33,9 +31,10 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.security.Principal;
+import java.time.Instant;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Locale;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -47,6 +46,11 @@ public class ChatController {
     private static final long MAX_UPLOAD_BYTES = 15L * 1024L * 1024L;
     private static final int MAX_MESSAGE_CHARS = 5_000;
     private static final Set<String> ALLOWED_MESSAGE_TYPES = Set.of("TEXT", "IMAGE", "VIDEO", "AUDIO", "DOCUMENT");
+    private static final Set<String> ALLOWED_MEDIA_TYPES = Set.of(
+        "image/jpeg", "image/png", "image/webp", "image/gif",
+        "video/mp4", "video/webm", "video/quicktime",
+        "audio/mpeg", "audio/mp4", "audio/webm", "audio/ogg", "audio/wav", "audio/x-wav"
+    );
     private static final Set<String> ALLOWED_DOCUMENT_TYPES = Set.of(
         "application/pdf",
         "text/plain",
@@ -59,20 +63,25 @@ public class ChatController {
         "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     );
 
-    @Autowired
-    private SimpMessagingTemplate messagingTemplate;
+    private final SimpMessagingTemplate messagingTemplate;
+    private final ChatMessageRepository chatMessageRepository;
+    private final ChatRequestRepository requestRepository;
+    private final UserRepository userRepository;
+    private final GridFsTemplate gridFsTemplate;
 
-    @Autowired
-    private ChatMessageRepository chatMessageRepository;
-
-    @Autowired
-    private ChatRequestRepository requestRepository;
-
-    @Autowired
-    private UserRepository userRepository;
-
-    @Autowired
-    private GridFsTemplate gridFsTemplate;
+    public ChatController(
+        SimpMessagingTemplate messagingTemplate,
+        ChatMessageRepository chatMessageRepository,
+        ChatRequestRepository requestRepository,
+        UserRepository userRepository,
+        GridFsTemplate gridFsTemplate
+    ) {
+        this.messagingTemplate = messagingTemplate;
+        this.chatMessageRepository = chatMessageRepository;
+        this.requestRepository = requestRepository;
+        this.userRepository = userRepository;
+        this.gridFsTemplate = gridFsTemplate;
+    }
 
     @PostMapping("/api/chat/upload")
     public ResponseEntity<?> uploadMedia(
@@ -177,7 +186,9 @@ public class ChatController {
         chatMessage.setRecipientEmail(recipientEmail);
         chatMessage.setMessageType(type);
         chatMessage.setContent(content);
-        chatMessage.setCreatedAt(LocalDateTime.now());
+        LocalDateTime now = LocalDateTime.now();
+        chatMessage.setCreatedAt(now);
+        chatMessage.setTimestamp(Instant.now().toString());
 
         if (!"TEXT".equals(type)) {
             GridFSFile media = findMediaByPublicId(extractMediaId(chatMessage.getMediaData()));
@@ -205,6 +216,9 @@ public class ChatController {
         String senderEmail = principalEmail(principal);
         if (senderEmail == null || payload == null) return;
 
+        var sender = userRepository.findByEmailIgnoreCase(senderEmail);
+        if (sender == null || !sender.isTypingIndicatorsEnabled()) return;
+
         String recipientEmail = normalizeEmail(payload.get("recipientEmail"));
         if (recipientEmail == null || !areAcceptedContacts(senderEmail, recipientEmail)) return;
 
@@ -221,14 +235,29 @@ public class ChatController {
         String senderEmail = principalEmail(principal);
         if (senderEmail == null || payload == null) return;
 
-        String recipientEmail = normalizeEmail((String) payload.get("recipientEmail"));
+        Object recipientValue = payload.get("recipientEmail");
+        String recipientEmail = normalizeEmail(recipientValue == null ? null : recipientValue.toString());
         String type = payload.get("type") == null ? null : payload.get("type").toString();
         if (recipientEmail == null || !areAcceptedContacts(senderEmail, recipientEmail)) return;
         if (!Set.of("offer", "answer", "ice-candidate", "end-call", "call-rejected").contains(type)) return;
 
-        payload.put("senderEmail", senderEmail);
-        payload.put("recipientEmail", recipientEmail);
-        messagingTemplate.convertAndSendToUser(recipientEmail, "/queue/signaling", payload);
+        Map<String, Object> safePayload = new HashMap<>();
+        safePayload.put("type", type);
+        safePayload.put("senderEmail", senderEmail);
+        safePayload.put("recipientEmail", recipientEmail);
+
+        if ("offer".equals(type) || "answer".equals(type)) {
+            if (payload.get("sdp") == null) return;
+            safePayload.put("sdp", payload.get("sdp"));
+            if ("offer".equals(type)) safePayload.put("isVideo", Boolean.TRUE.equals(payload.get("isVideo")));
+        } else if ("ice-candidate".equals(type)) {
+            if (payload.get("candidate") == null) return;
+            safePayload.put("candidate", payload.get("candidate"));
+        } else if ("call-rejected".equals(type)) {
+            safePayload.put("reason", "busy".equals(payload.get("reason")) ? "busy" : "declined");
+        }
+
+        messagingTemplate.convertAndSendToUser(recipientEmail, "/queue/signaling", safePayload);
     }
 
     private boolean areAcceptedContacts(String user1, String user2) {
@@ -295,9 +324,7 @@ public class ChatController {
 
     private boolean isAllowedContentType(String contentType) {
         if (contentType == null) return false;
-        return contentType.startsWith("image/")
-            || contentType.startsWith("video/")
-            || contentType.startsWith("audio/")
+        return ALLOWED_MEDIA_TYPES.contains(contentType)
             || ALLOWED_DOCUMENT_TYPES.contains(contentType);
     }
 

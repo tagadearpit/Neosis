@@ -5,22 +5,16 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
   plugins: [
-    // 1. Tailwind must come first to handle the CSS processing correctly
-    tailwindcss(), 
-    
-    // 2. Then your React plugin
+    tailwindcss(),
     react(),
-    
-    // 3. Finally, your PWA plugin
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png'],
       manifest: {
         name: 'Neosis Secure Chat',
         short_name: 'Neosis',
-        description: 'End-to-end encrypted real-time communication',
-        theme_color: '#1d4ed8',
-        background_color: '#ffffff',
+        description: 'Private real-time messaging and WebRTC calling',
+        theme_color: '#111313',
+        background_color: '#111313',
         display: 'standalone',
         icons: [
           {
@@ -37,5 +31,7 @@ export default defineConfig({
         ]
       }
     })
-  ]
+  ],
+  define: { global: 'globalThis' },
+  build: { sourcemap: false, target: 'es2020' }
 });

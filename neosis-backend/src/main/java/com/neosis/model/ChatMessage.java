@@ -28,6 +28,7 @@ public class ChatMessage {
     private String mediaFilename;
     private String mediaContentType;
     private Long mediaSize;
+    private LocalDateTime readAt;
 
     @CreatedDate
     private LocalDateTime createdAt;
@@ -73,6 +74,9 @@ public class ChatMessage {
 
     public Long getMediaSize() { return mediaSize; }
     public void setMediaSize(Long mediaSize) { this.mediaSize = mediaSize; }
+
+    public LocalDateTime getReadAt() { return readAt; }
+    public void setReadAt(LocalDateTime readAt) { this.readAt = readAt; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

@@ -1,14 +1,18 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo, Component } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, useContext, Component } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   MessageSquare, UserPlus, Bell, Send, Check, CheckCheck, ArrowLeft, Moon, Sun, 
   Loader2, Phone, Video, Search, MoreVertical, Paperclip, Smile, Mic, ShieldCheck,
   X, User, Trash2, Ban, PhoneOff, PhoneCall, ShieldAlert, Info, Settings, LogOut, UserCog, Shield,
-  FileText
+  FileText, Pin, BellOff, BellRing, UserMinus
 } from 'lucide-react';
 import SockJS from 'sockjs-client';
 import { Client } from '@stomp/stompjs';
-import api, { BACKEND_URL } from '../api';
+import api, { BACKEND_URL, getApiErrorMessage } from '../api';
+import { AuthContext } from '../context/AuthContext';
+import SettingsModal from './SettingsModal';
+import ConfirmDialog from './ConfirmDialog';
+import ContactInfoModal from './ContactInfoModal';
 
 class ChatErrorBoundary extends Component {
   constructor(props) {
@@ -66,6 +70,43 @@ const resolveMediaUrl = (url) => {
   return url.startsWith('http') ? url : `${BACKEND_URL}${url}`;
 };
 
+const formatMessageTime = (message) => {
+  const value = message?.timestamp || message?.createdAt;
+  if (!value) return 'Just now';
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return value;
+};
+
+
+const getContactEmail = (contact) => typeof contact === 'string' ? contact : contact?.email;
+const getContactName = (contact) => contact?.name || formatName(getContactEmail(contact));
+const sortContacts = (contacts) => [...contacts].sort((a, b) => {
+  if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
+  return getContactName(a).localeCompare(getContactName(b), undefined, { sensitivity: 'base' });
+});
+
+const playNotificationTone = () => {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    const context = new AudioContextClass();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.frequency.value = 660;
+    gain.gain.setValueAtTime(0.0001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.08, context.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.12);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.13);
+    oscillator.addEventListener('ended', () => context.close());
+  } catch {
+    // Browsers can block programmatic audio before user interaction.
+  }
+};
+
 const EMOJI_LIST = ["😀","😂","🤣","😊","🥰","😍","😒","😘","💕","😁","👍","🙌","✌️","✨","🔥","🎉","💯","💔","❤️","🥺","😎","🤔","🙄","😴","🤐","🤢","🤧","😷","🤯","🤠","🥳","🤫","🤭","🧐","🤓","😈","💀","👻","👽","🤖","👋","🤚","🖐","✋","🖖","👌","🤏","🤞","🤟","🤘","🤙","👈","👉","👆","👇","☝️","👍","👎","✊","👊","🤛","🤜","👏","🙌","👐","🤲","🤝","🙏","✍️","💅","🤳","💪","🦾","🦵","🦿","🦶","👣","👂","🦻","👃","🦼","🧠","🦷","🦴","👀","👁","👅","👄","💋","🩸"];
 
 const optionalTurnServer = import.meta.env.VITE_TURN_URL ? [{
@@ -88,7 +129,8 @@ const messageVariants = { hidden: { opacity: 0, y: 20, scale: 0.95, rotateX: -15
 const pageTransition = { hidden: { opacity: 0, scale: 0.98 }, show: { opacity: 1, scale: 1, transition: { duration: 0.5, ease: "easeOut" } } };
 
 function NeosisChatInner() {
-  const [currentUser, setCurrentUser] = useState(null);
+  const { user: authUser, setUser: setAuthUser, clearSession } = useContext(AuthContext);
+  const [currentUser, setCurrentUser] = useState(authUser);
   const [activeChat, setActiveChat] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
@@ -97,6 +139,12 @@ function NeosisChatInner() {
   const [pendingRequests, setPendingRequests] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState('account');
+  const [showContactInfo, setShowContactInfo] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState(null);
+  const [isConfirming, setIsConfirming] = useState(false);
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const [addEmailInput, setAddEmailInput] = useState('');
   const [unreadCounts, setUnreadCounts] = useState({});
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') !== 'light');
@@ -141,10 +189,11 @@ function NeosisChatInner() {
   const activeChatRef = useRef(activeChat);
   const currentUserRef = useRef(currentUser);
   const friendsRef = useRef(friends);
-  const latestHistoryRequestRef = useRef(null);
+  const historyAbortRef = useRef(null);
 
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const remoteAudioRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
   const remoteStreamRef = useRef(null);
@@ -161,6 +210,9 @@ function NeosisChatInner() {
 
   useEffect(() => { activeChatRef.current = activeChat; }, [activeChat]);
   useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
+  useEffect(() => {
+    if (authUser) setCurrentUser(authUser);
+  }, [authUser]);
   useEffect(() => { 
     if (isDarkMode) {
       document.documentElement.classList.add('dark'); 
@@ -182,26 +234,25 @@ function NeosisChatInner() {
   }, [showEmojiPicker]);
 
   useEffect(() => {
-    if (callState === 'in-call' && remoteVideoRef.current && remoteStreamRef.current) {
-      remoteVideoRef.current.srcObject = remoteStreamRef.current;
-    }
+    if (callState !== 'in-call') return;
+    if (localVideoRef.current && localStreamRef.current) localVideoRef.current.srcObject = localStreamRef.current;
+    if (isVideoCall && remoteVideoRef.current && remoteStreamRef.current) remoteVideoRef.current.srcObject = remoteStreamRef.current;
+    if (!isVideoCall && remoteAudioRef.current && remoteStreamRef.current) remoteAudioRef.current.srcObject = remoteStreamRef.current;
   }, [callState, isVideoCall]);
 
   const fetchSidebarData = useCallback(async () => {
     try {
-      const friendsRes = await api.get('/api/contacts/friends');
-      const pendingRes = await api.get('/api/contacts/pending');
-      setFriends(friendsRes.data);
-      setPendingRequests(pendingRes.data);
-      
-      setUnreadCounts(prev => {
-        const newCounts = { ...prev };
-        Object.keys(newCounts).forEach(email => {
-          if (!friendsRes.data.includes(email)) delete newCounts[email];
-        });
-        return newCounts;
-      });
-    } catch (err) {}
+      const [conversationsRes, pendingRes] = await Promise.all([
+        api.get('/api/conversations'),
+        api.get('/api/contacts/pending')
+      ]);
+      const conversations = Array.isArray(conversationsRes.data) ? sortContacts(conversationsRes.data) : [];
+      setFriends(conversations);
+      setPendingRequests(Array.isArray(pendingRes.data) ? pendingRes.data : []);
+      setUnreadCounts(Object.fromEntries(conversations.map(contact => [contact.email, Number(contact.unreadCount || 0)])));
+    } catch (error) {
+      if (import.meta.env.DEV) console.error('Failed to load conversations', error);
+    }
   }, []);
 
   const showToast = useCallback((message, type = 'success') => {
@@ -212,31 +263,26 @@ function NeosisChatInner() {
 
   const handleAcceptTerms = async () => {
     try {
-      const csrfRes = await api.get('/api/csrf');
-      const csrf = csrfRes?.data;
-
-      await api.post(
-        '/api/users/accept-terms',
-        {},
-        {
-          headers: {
-            [csrf?.headerName || 'X-XSRF-TOKEN']: csrf?.token
-          }
-        }
-      );
-
-      localStorage.setItem('neosis_tc_accepted', 'true');
+      await api.post('/api/users/accept-terms', {});
       setHasAcceptedTC(true);
+      const updatedUser = { ...currentUserRef.current, termsAccepted: true };
+      setCurrentUser(updatedUser);
+      setAuthUser(updatedUser);
       showToast("Welcome to Neosis!", "success");
-    } catch (err) {
-      console.error('Accept terms failed:', err?.response?.status, err?.response?.data);
-      showToast("Network Error: Could not verify identity.", "error");
+    } catch (error) {
+      showToast(getApiErrorMessage(error, "Could not record terms acceptance."), "error");
     }
   };
 
   const handleLogout = async () => {
-    try { await api.post('/logout', null); } catch (err) {}
-    window.location.href = '/login';
+    try {
+      await api.post('/logout', null);
+    } catch {
+      // The client still clears its local authentication state if the server is unavailable.
+    } finally {
+      clearSession();
+      window.location.replace('/login');
+    }
   };
 
   const cleanupCallResources = useCallback(() => {
@@ -263,343 +309,361 @@ function NeosisChatInner() {
     cleanupCallResources();
   }, [cleanupCallResources]);
 
-  const connectWebSocket = useCallback((userEmail) => {
+  const markConversationRead = useCallback(async (friendEmail) => {
+    if (!friendEmail) return;
+    try {
+      const response = await api.post(`/api/messages/read/${encodeURIComponent(friendEmail)}`, {});
+      const readAt = response.data?.readAt;
+      setUnreadCounts((previous) => ({ ...previous, [friendEmail]: 0 }));
+      setFriends((previous) => previous.map((contact) => contact.email === friendEmail ? { ...contact, unreadCount: 0 } : contact));
+      if (readAt) {
+        setMessages((previous) => previous.map((message) => (
+          message.senderEmail === friendEmail && message.recipientEmail === currentUserRef.current?.email
+            ? { ...message, readAt: message.readAt || readAt }
+            : message
+        )));
+      }
+    } catch (error) {
+      if (import.meta.env.DEV) console.error('Failed to mark conversation as read', error);
+    }
+  }, []);
+
+  const connectWebSocket = useCallback(() => {
     if (stompClientRef.current?.active) stompClientRef.current.deactivate();
 
     const client = new Client({
       webSocketFactory: () => new SockJS(`${BACKEND_URL}/ws`, null, { withCredentials: true }),
-      reconnectDelay: 5000, 
-      heartbeatIncoming: 4000, 
-      heartbeatOutgoing: 4000,
+      reconnectDelay: 5000,
+      heartbeatIncoming: 10000,
+      heartbeatOutgoing: 10000,
       onConnect: () => {
-        client.subscribe('/user/queue/messages', (message) => {
-          const incomingMessage = JSON.parse(message.body);
-          if (incomingMessage.senderEmail === activeChatRef.current || incomingMessage.senderEmail === currentUserRef.current?.email) {
-            setMessages((prev) => {
-              if (incomingMessage.localId) {
-                const localIndex = prev.findIndex(m => m.localId === incomingMessage.localId);
-                if (localIndex !== -1) { 
-                  const newMessages = [...prev]; 
-                  newMessages[localIndex] = incomingMessage; 
-                  return newMessages; 
+        setIsRealtimeConnected(true);
+
+        client.subscribe('/user/queue/messages', (frame) => {
+          try {
+            const incomingMessage = JSON.parse(frame.body);
+            const currentEmail = currentUserRef.current?.email;
+            const selectedEmail = activeChatRef.current;
+            const belongsToSelectedConversation = Boolean(selectedEmail) && (
+              (incomingMessage.senderEmail === currentEmail && incomingMessage.recipientEmail === selectedEmail) ||
+              (incomingMessage.senderEmail === selectedEmail && incomingMessage.recipientEmail === currentEmail)
+            );
+
+            if (belongsToSelectedConversation) {
+              setMessages((previous) => {
+                if (incomingMessage.localId) {
+                  const localIndex = previous.findIndex((item) => item.localId === incomingMessage.localId);
+                  if (localIndex !== -1) {
+                    const next = [...previous];
+                    next[localIndex] = incomingMessage;
+                    return next;
+                  }
                 }
-              }
-              const isDuplicate = prev.some(m => (m.id && incomingMessage.id && m.id === incomingMessage.id) || (m.localId && incomingMessage.localId && m.localId === incomingMessage.localId));
-              return isDuplicate ? prev : [...prev, incomingMessage];
-            });
-          } else if (incomingMessage.senderEmail !== currentUserRef.current?.email) {
-            setUnreadCounts((prev) => ({ ...prev, [incomingMessage.senderEmail]: (prev[incomingMessage.senderEmail] || 0) + 1 }));
-          }
-          setIsRemoteTyping(false);
-          if (remoteTypingTimeoutRef.current) clearTimeout(remoteTypingTimeoutRef.current);
-        });
-        
-        client.subscribe('/user/queue/typing', (message) => {
-          const data = JSON.parse(message.body);
-          if (data.senderEmail === activeChatRef.current) {
-            setIsRemoteTyping(data.isTyping === 'true');
+                const duplicate = previous.some((item) =>
+                  (item.id && incomingMessage.id && item.id === incomingMessage.id) ||
+                  (item.localId && incomingMessage.localId && item.localId === incomingMessage.localId)
+                );
+                return duplicate ? previous : [...previous, incomingMessage];
+              });
+
+              if (incomingMessage.senderEmail === selectedEmail) markConversationRead(selectedEmail);
+            } else if (incomingMessage.senderEmail !== currentEmail) {
+              setUnreadCounts((previous) => ({
+                ...previous,
+                [incomingMessage.senderEmail]: (previous[incomingMessage.senderEmail] || 0) + 1
+              }));
+              setFriends((previous) => previous.map((contact) => contact.email === incomingMessage.senderEmail
+                ? { ...contact, unreadCount: Number(contact.unreadCount || 0) + 1 }
+                : contact
+              ));
+
+              const senderContact = friendsRef.current.find((contact) => contact.email === incomingMessage.senderEmail);
+              if (currentUserRef.current?.notificationSoundsEnabled !== false && !senderContact?.muted) playNotificationTone();
+            }
+
+            setIsRemoteTyping(false);
             if (remoteTypingTimeoutRef.current) clearTimeout(remoteTypingTimeoutRef.current);
-            if (data.isTyping === 'true') { remoteTypingTimeoutRef.current = setTimeout(() => setIsRemoteTyping(false), 3000); }
+          } catch (error) {
+            if (import.meta.env.DEV) console.error('Invalid message frame', error);
           }
         });
 
-        client.subscribe('/user/queue/signaling', async (message) => {
-          const data = JSON.parse(message.body);
-          
-          if (data.type === 'offer') { 
-            if (!friendsRef.current.includes(data.senderEmail)) return;
+        client.subscribe('/user/queue/receipts', (frame) => {
+          try {
+            const receipt = JSON.parse(frame.body);
+            if (!receipt.readerEmail || !receipt.readAt) return;
+            setMessages((previous) => previous.map((message) => (
+              message.senderEmail === currentUserRef.current?.email && message.recipientEmail === receipt.readerEmail
+                ? { ...message, readAt: message.readAt || receipt.readAt }
+                : message
+            )));
+          } catch (error) {
+            if (import.meta.env.DEV) console.error('Invalid read receipt frame', error);
+          }
+        });
 
-            if (callStateRef.current !== 'idle') {
-              if (stompClientRef.current && stompClientRef.current.connected) {
-                stompClientRef.current.publish({ destination: '/app/chat.signal', body: JSON.stringify({ type: 'call-rejected', reason: 'busy', recipientEmail: data.senderEmail }) });
+        client.subscribe('/user/queue/typing', (frame) => {
+          try {
+            const data = JSON.parse(frame.body);
+            if (data.senderEmail === activeChatRef.current) {
+              setIsRemoteTyping(data.isTyping === 'true');
+              if (remoteTypingTimeoutRef.current) clearTimeout(remoteTypingTimeoutRef.current);
+              if (data.isTyping === 'true') {
+                remoteTypingTimeoutRef.current = setTimeout(() => setIsRemoteTyping(false), 3000);
               }
-              return; 
             }
-            callPeerEmailRef.current = data.senderEmail;
-            setIncomingCallData(data); 
-            setCallState('ringing'); 
-          } 
-          else if (data.type === 'answer' && peerConnectionRef.current && peerConnectionRef.current.signalingState !== 'closed') { 
-            await peerConnectionRef.current.setRemoteDescription(data.sdp); 
-            while (iceCandidateQueueRef.current.length > 0) {
-              if (peerConnectionRef.current && peerConnectionRef.current.signalingState !== 'closed') {
+          } catch (error) {
+            if (import.meta.env.DEV) console.error('Invalid typing frame', error);
+          }
+        });
+
+        client.subscribe('/user/queue/signaling', async (frame) => {
+          try {
+            const data = JSON.parse(frame.body);
+            if (data.type === 'offer') {
+              if (!friendsRef.current.some((contact) => contact.email === data.senderEmail)) return;
+              if (callStateRef.current !== 'idle') {
+                client.publish({ destination: '/app/chat.signal', body: JSON.stringify({ type: 'call-rejected', reason: 'busy', recipientEmail: data.senderEmail }) });
+                return;
+              }
+              callPeerEmailRef.current = data.senderEmail;
+              setIncomingCallData(data);
+              setCallState('ringing');
+            } else if (data.type === 'answer' && peerConnectionRef.current?.signalingState !== 'closed') {
+              await peerConnectionRef.current.setRemoteDescription(data.sdp);
+              while (iceCandidateQueueRef.current.length > 0 && peerConnectionRef.current?.signalingState !== 'closed') {
                 await peerConnectionRef.current.addIceCandidate(iceCandidateQueueRef.current.shift());
-              } else {
-                iceCandidateQueueRef.current = [];
               }
+            } else if (data.type === 'ice-candidate') {
+              const connection = peerConnectionRef.current;
+              if (!connection || connection.signalingState === 'closed') return;
+              const candidate = new RTCIceCandidate(data.candidate);
+              if (connection.remoteDescription?.type) await connection.addIceCandidate(candidate);
+              else if (iceCandidateQueueRef.current.length < 50) iceCandidateQueueRef.current.push(candidate);
+            } else if (data.type === 'end-call') {
+              cleanupCallResources();
+            } else if (data.type === 'call-rejected') {
+              showToast(data.reason === 'busy' ? 'Contact is currently busy.' : 'Call declined.', 'info');
+              cleanupCallResources();
             }
-          } 
-          else if (data.type === 'ice-candidate') {
-            const pc = peerConnectionRef.current;
-            if (!pc || pc.signalingState === 'closed') return;
-            const candidate = new RTCIceCandidate(data.candidate);
-            if (pc.remoteDescription && pc.remoteDescription.type) {
-              await pc.addIceCandidate(candidate); 
-            } else if (iceCandidateQueueRef.current.length < 50) {
-              iceCandidateQueueRef.current.push(candidate);
-            }
-          } 
-          else if (data.type === 'end-call') { cleanupCallResources(); }
-          else if (data.type === 'call-rejected') {
-            showToast(`Call declined: User is ${data.reason || 'busy'}`, 'info');
+          } catch (error) {
+            if (import.meta.env.DEV) console.error('Signaling failure', error);
             cleanupCallResources();
           }
         });
 
         client.subscribe('/user/queue/notifications', () => fetchSidebarData());
       },
-      onStompError: (frame) => console.error('STOMP Error:', frame.headers['message'], frame.body),
-      onWebSocketError: (error) => console.error('WebSocket Error:', error)
+      onDisconnect: () => setIsRealtimeConnected(false),
+      onStompError: () => {
+        setIsRealtimeConnected(false);
+        showToast('Realtime connection interrupted. Reconnecting…', 'info');
+      },
+      onWebSocketClose: () => setIsRealtimeConnected(false),
+      onWebSocketError: () => setIsRealtimeConnected(false)
     });
+
     client.activate();
-    stompClientRef.current = client; 
-  }, [cleanupCallResources, fetchSidebarData, showToast]);
+    stompClientRef.current = client;
+  }, [cleanupCallResources, fetchSidebarData, markConversationRead, showToast]);
 
   useEffect(() => {
-    let isMounted = true;
-    const initializeApp = async () => {
-      try {
-        const userRes = await api.get('/api/users/me');
-        if (!isMounted) return;
-        if (!userRes.data || !userRes.data.email) { window.location.href = '/login'; return; }
-        
-        setCurrentUser(userRes.data);
-        if (userRes.data.termsAccepted !== undefined) {
-          setHasAcceptedTC(userRes.data.termsAccepted === true || userRes.data.termsAccepted === 'true');
-        }
+    if (!authUser?.email) return undefined;
 
-        connectWebSocket(userRes.data.email);
-        fetchSidebarData();
-      } catch (err) { 
-        if (!isMounted) return;
-        if (err.response?.status === 401 || err.response?.status === 403) { window.location.href = '/login'; }
-      }
-    };
-    initializeApp();
+    setCurrentUser(authUser);
+    setHasAcceptedTC(authUser.termsAccepted === true || authUser.termsAccepted === 'true');
+    connectWebSocket();
+    fetchSidebarData();
 
     return () => {
-      isMounted = false;
+      historyAbortRef.current?.abort();
       if (stompClientRef.current) stompClientRef.current.deactivate();
+      setIsRealtimeConnected(false);
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       if (remoteTypingTimeoutRef.current) clearTimeout(remoteTypingTimeoutRef.current);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
-      cleanupCallResources(); 
-      
+      cleanupCallResources();
+
       if (isRecordingRef.current && mediaRecorderRef.current) {
         mediaRecorderRef.current.stop();
         clearInterval(recordingTimerRef.current);
       }
     };
-  }, [fetchSidebarData, connectWebSocket, cleanupCallResources]);
+  }, [authUser, fetchSidebarData, connectWebSocket, cleanupCallResources]);
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]); 
 
-  const sendWebRTCSignal = (payload) => { 
-    if (stompClientRef.current && stompClientRef.current.connected) { 
-      stompClientRef.current.publish({ destination: '/app/chat.signal', body: JSON.stringify(payload) }); 
-    } 
-  };
-  
+  const sendWebRTCSignal = useCallback((payload) => {
+    if (!stompClientRef.current?.connected) return false;
+    stompClientRef.current.publish({ destination: '/app/chat.signal', body: JSON.stringify(payload) });
+    return true;
+  }, []);
+
+  const configurePeerConnection = useCallback((connection, recipientEmail, videoEnabled) => {
+    connection.ontrack = (event) => {
+      const [stream] = event.streams;
+      if (!stream) return;
+      remoteStreamRef.current = stream;
+      if (videoEnabled && remoteVideoRef.current) remoteVideoRef.current.srcObject = stream;
+      if (!videoEnabled && remoteAudioRef.current) remoteAudioRef.current.srcObject = stream;
+    };
+    connection.onicecandidate = (event) => {
+      if (event.candidate) sendWebRTCSignal({ type: 'ice-candidate', candidate: event.candidate, recipientEmail });
+    };
+    connection.onconnectionstatechange = () => {
+      if (['failed', 'closed'].includes(connection.connectionState)) cleanupCallResources();
+      if (connection.connectionState === 'disconnected') {
+        showToast('Call connection interrupted.', 'info');
+      }
+    };
+  }, [cleanupCallResources, sendWebRTCSignal, showToast]);
+
   const handleStartCall = async (video = true) => {
-    if (callState !== 'idle') return; 
-    
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      showToast("Media devices not supported.", "error");
+    const recipientEmail = activeChatRef.current;
+    if (!recipientEmail || callStateRef.current !== 'idle') return;
+    if (!isRealtimeConnected) {
+      showToast('Realtime connection is unavailable.', 'error');
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      showToast('Media devices are not supported by this browser.', 'error');
       return;
     }
 
     try {
-      setIsVideoCall(video); 
+      setIsVideoCall(video);
       setCallState('in-call');
-      callPeerEmailRef.current = activeChat; 
-      
+      callPeerEmailRef.current = recipientEmail;
       const stream = await navigator.mediaDevices.getUserMedia({ video, audio: true });
-      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       localStreamRef.current = stream;
-      peerConnectionRef.current = new RTCPeerConnection(rtcConfiguration);
-      stream.getTracks().forEach(track => peerConnectionRef.current.addTrack(track, stream));
-      
-      peerConnectionRef.current.ontrack = (event) => { 
-        remoteStreamRef.current = event.streams[0];
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = event.streams[0]; 
-        }
-      };
 
-      peerConnectionRef.current.onicecandidate = (event) => { if (event.candidate) sendWebRTCSignal({ type: 'ice-candidate', candidate: event.candidate, recipientEmail: activeChat }); };
-      const offer = await peerConnectionRef.current.createOffer();
-      await peerConnectionRef.current.setLocalDescription(offer);
-      sendWebRTCSignal({ type: 'offer', sdp: offer, recipientEmail: activeChat, isVideo: video });
-    } catch (err) { 
-      showToast("Camera/Mic access denied", "error"); 
-      callPeerEmailRef.current = null; 
-      setCallState('idle'); 
+      const connection = new RTCPeerConnection(rtcConfiguration);
+      peerConnectionRef.current = connection;
+      configurePeerConnection(connection, recipientEmail, video);
+      stream.getTracks().forEach((track) => connection.addTrack(track, stream));
+      if (video && localVideoRef.current) localVideoRef.current.srcObject = stream;
+
+      const offer = await connection.createOffer();
+      await connection.setLocalDescription(offer);
+      sendWebRTCSignal({ type: 'offer', sdp: offer, recipientEmail, isVideo: video });
+    } catch (error) {
+      cleanupCallResources();
+      showToast(error?.name === 'NotAllowedError' ? 'Camera or microphone permission was denied.' : 'Could not start the call.', 'error');
     }
   };
 
   const handleAcceptCall = async () => {
-    if (!incomingCallDataRef.current) return;
-    const { senderEmail, isVideo, sdp } = incomingCallDataRef.current;
-
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      showToast("Media devices not supported.", "error");
-      handleRejectCall();
-      return;
-    }
+    const incoming = incomingCallDataRef.current;
+    if (!incoming || !navigator.mediaDevices?.getUserMedia) return;
+    const { senderEmail, isVideo, sdp } = incoming;
 
     try {
-      setIsVideoCall(isVideo); 
+      setIsVideoCall(Boolean(isVideo));
       setCallState('in-call');
-      const stream = await navigator.mediaDevices.getUserMedia({ video: isVideo, audio: true });
-      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      callPeerEmailRef.current = senderEmail;
+      const stream = await navigator.mediaDevices.getUserMedia({ video: Boolean(isVideo), audio: true });
       localStreamRef.current = stream;
-      peerConnectionRef.current = new RTCPeerConnection(rtcConfiguration);
-      stream.getTracks().forEach(track => peerConnectionRef.current.addTrack(track, stream));
-      
-      peerConnectionRef.current.ontrack = (event) => { 
-        remoteStreamRef.current = event.streams[0];
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = event.streams[0]; 
-        }
-      };
 
-      peerConnectionRef.current.onicecandidate = (event) => { if (event.candidate) sendWebRTCSignal({ type: 'ice-candidate', candidate: event.candidate, recipientEmail: senderEmail }); };
-      
-      await peerConnectionRef.current.setRemoteDescription(sdp);
-      
-      while (iceCandidateQueueRef.current.length > 0) {
-        if (peerConnectionRef.current && peerConnectionRef.current.signalingState !== 'closed') {
-          await peerConnectionRef.current.addIceCandidate(iceCandidateQueueRef.current.shift());
-        } else {
-          iceCandidateQueueRef.current = [];
-        }
+      const connection = new RTCPeerConnection(rtcConfiguration);
+      peerConnectionRef.current = connection;
+      configurePeerConnection(connection, senderEmail, Boolean(isVideo));
+      stream.getTracks().forEach((track) => connection.addTrack(track, stream));
+      if (isVideo && localVideoRef.current) localVideoRef.current.srcObject = stream;
+
+      await connection.setRemoteDescription(sdp);
+      while (iceCandidateQueueRef.current.length > 0 && connection.signalingState !== 'closed') {
+        await connection.addIceCandidate(iceCandidateQueueRef.current.shift());
       }
-
-      const answer = await peerConnectionRef.current.createAnswer();
-      await peerConnectionRef.current.setLocalDescription(answer);
+      const answer = await connection.createAnswer();
+      await connection.setLocalDescription(answer);
       sendWebRTCSignal({ type: 'answer', sdp: answer, recipientEmail: senderEmail });
-    } catch (err) { 
-      showToast("Camera/Mic access denied", "error"); 
-      handleRejectCall(); 
+    } catch (error) {
+      sendWebRTCSignal({ type: 'call-rejected', reason: 'media-unavailable', recipientEmail: senderEmail });
+      cleanupCallResources();
+      showToast(error?.name === 'NotAllowedError' ? 'Camera or microphone permission was denied.' : 'Could not accept the call.', 'error');
     }
   };
 
-  const handleRejectCall = () => { 
-    if (incomingCallDataRef.current) {
-      sendWebRTCSignal({ type: 'end-call', recipientEmail: incomingCallDataRef.current.senderEmail }); 
-    }
+  const handleRejectCall = () => {
+    const senderEmail = incomingCallDataRef.current?.senderEmail;
+    if (senderEmail) sendWebRTCSignal({ type: 'call-rejected', reason: 'declined', recipientEmail: senderEmail });
     cleanupCallResources();
   };
 
-  const handleSendRequest = async (e) => { 
-    e.preventDefault(); 
-    const email = addEmailInput.trim();
-    
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { 
-      showToast("Invalid email format.", "error"); 
-      return; 
-    } 
-    
-    try { 
-      const csrfRes = await api.get('/api/csrf');
-      const csrf = csrfRes?.data;
-
-      const response = await api.post('/api/contacts/request', null, {
-        params: { receiverEmail: email },
-        headers: {
-          [csrf?.headerName || 'X-XSRF-TOKEN']: csrf?.token
-        }
-      }); 
-      
-      if (typeof response.data === 'string' && (response.data.includes('Error') || response.data.includes('Forbidden'))) {
-        showToast(response.data, "error");
-      } else {
-        setAddEmailInput(''); 
-        showToast(response.data || "Request sent!", "success"); 
-      }
-    } catch (err) { 
-      console.error("Add contact error:", err);
-      let errMsg = "Failed to send request.";
-      
-      if (err.response) {
-        if (err.response.status === 403) {
-          errMsg = "403 Forbidden: CSRF or auth validation failed.";
-        } else {
-          errMsg = err.response.data?.message || err.response.data?.error || `Server Error ${err.response.status}`;
-          if (typeof err.response.data === 'string' && err.response.data.length < 100) {
-            errMsg = err.response.data;
-          }
-        }
-      } else if (err.message) {
-        errMsg = err.message;
-      }
-      
-      showToast(errMsg, "error"); 
-    } 
-  };
-  
-  const handleAcceptRequest = async (requestId) => { 
+  const handleSendRequest = async (event) => {
+    event.preventDefault();
+    const email = addEmailInput.trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      showToast('Enter a valid email address.', 'error');
+      return;
+    }
+    if (email === currentUserRef.current?.email?.toLowerCase()) {
+      showToast('You cannot add your own account.', 'error');
+      return;
+    }
     try {
-      const csrfRes = await api.get('/api/csrf');
-      const csrf = csrfRes?.data;
-
-      const response = await api.post('/api/contacts/accept', null, {
-        params: { requestId: requestId },
-        headers: {
-          [csrf?.headerName || 'X-XSRF-TOKEN']: csrf?.token
-        }
-      }); 
-      
-      if (typeof response.data === 'string' && (response.data.includes('Error') || response.data.includes('Forbidden'))) {
-        showToast(response.data, "error");
-      } else {
-        fetchSidebarData(); 
-        setShowNotifications(false); 
-        showToast("Request Accepted!", "success"); 
-      }
-    } catch (err) { 
-      console.error("Accept contact error:", err);
-      let errMsg = "Failed to accept request.";
-      if (err.response) {
-        if (err.response.status === 403) {
-          errMsg = "403 Forbidden: CSRF or auth validation failed.";
-        } else {
-          errMsg = err.response.data?.message || err.response.data?.error || `Server Error ${err.response.status}`;
-          if (typeof err.response.data === 'string' && err.response.data.length < 100) {
-            errMsg = err.response.data;
-          }
-        }
-      }
-      showToast(errMsg, "error"); 
-    } 
+      const response = await api.post('/api/contacts/request', null, { params: { receiverEmail: email } });
+      setAddEmailInput('');
+      showToast(response.data?.message || 'Contact request sent.', 'success');
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to send the contact request.'), 'error');
+    }
   };
-  
-  const handleOpenChat = async (friendEmail) => { 
-    const requestId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
-    latestHistoryRequestRef.current = requestId;
 
-    setActiveChat(friendEmail); 
-    setMessages([]); 
-    setUnreadCounts(prev => { const newCounts = { ...prev }; delete newCounts[friendEmail]; return newCounts; }); 
+  const handleAcceptRequest = async (requestId) => {
+    try {
+      const response = await api.post('/api/contacts/accept', null, { params: { requestId } });
+      await fetchSidebarData();
+      showToast(response.data?.message || 'Contact request accepted.', 'success');
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to accept the contact request.'), 'error');
+    }
+  };
+
+  const handleRejectRequest = async (requestId) => {
+    try {
+      const response = await api.post('/api/contacts/reject', null, { params: { requestId } });
+      await fetchSidebarData();
+      showToast(response.data?.message || 'Contact request rejected.', 'info');
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to reject the contact request.'), 'error');
+    }
+  };
+
+  const handleOpenChat = async (contactOrEmail) => {
+    const friendEmail = getContactEmail(contactOrEmail);
+    if (!friendEmail) return;
+    historyAbortRef.current?.abort();
+    const controller = new AbortController();
+    historyAbortRef.current = controller;
+
+    setActiveChat(friendEmail);
+    setMessages([]);
+    setUnreadCounts((previous) => ({ ...previous, [friendEmail]: 0 }));
     setIsRemoteTyping(false);
     setShowEmojiPicker(false);
     setAttachment(null);
     setAttachmentPreview(null);
+    setIsChatLoading(true);
+    setIsSearching(false);
+    setSearchQuery('');
+    setShowMoreMenu(false);
     if (remoteTypingTimeoutRef.current) clearTimeout(remoteTypingTimeoutRef.current);
 
-    setIsChatLoading(true); 
-    setIsSearching(false); 
-    setSearchQuery(''); 
-    setShowMoreMenu(false); 
-    try { 
-      const historyRes = await api.get(`/api/messages/history/${friendEmail}`, { params: { limit: 50 } }); 
-      if (latestHistoryRequestRef.current !== requestId) return;
-      setMessages(historyRes.data); 
-    } catch (err) { 
-      if (latestHistoryRequestRef.current === requestId) showToast("Failed to load history.", "error"); 
-    } finally { 
-      if (latestHistoryRequestRef.current === requestId) setIsChatLoading(false); 
-    } 
+    try {
+      const historyRes = await api.get(`/api/messages/history/${encodeURIComponent(friendEmail)}`, {
+        params: { limit: 100 },
+        signal: controller.signal
+      });
+      setMessages(Array.isArray(historyRes.data) ? historyRes.data : []);
+      await markConversationRead(friendEmail);
+    } catch (error) {
+      if (error?.code !== 'ERR_CANCELED' && error?.name !== 'CanceledError') {
+        showToast(getApiErrorMessage(error, 'Failed to load chat history.'), 'error');
+      }
+    } finally {
+      if (historyAbortRef.current === controller) setIsChatLoading(false);
+    }
   };
 
   const onEmojiClick = (emoji) => {
@@ -611,9 +675,10 @@ function NeosisChatInner() {
     const file = e.target.files[0];
     if (!file) return;
     
-    if (file.size > 15 * 1024 * 1024) { 
-      showToast("File too large. Maximum size is 15MB.", "error"); 
-      return; 
+    if (file.size > 15 * 1024 * 1024) {
+      showToast('File too large. Maximum size is 15 MB.', 'error');
+      e.target.value = '';
+      return;
     }
     
     setAttachment(file);
@@ -637,92 +702,74 @@ function NeosisChatInner() {
   };
 
   const startRecording = async () => {
-    if (isRecordingRef.current) return; 
-
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      showToast("Media recording not supported.", "error");
+    if (isRecordingRef.current || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      if (typeof MediaRecorder === 'undefined') showToast('Audio recording is not supported by this browser.', 'error');
       return;
     }
 
-    let stream = null;
+    let stream;
     try {
       const recipientAtRecordStart = activeChatRef.current;
       if (!recipientAtRecordStart) return;
-
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
-        ? 'audio/webm;codecs=opus' 
-        : 'audio/mp4';
-        
-      mediaRecorderRef.current = new MediaRecorder(stream, { mimeType });
+
+      const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+      const supportedMimeType = candidates.find((type) => MediaRecorder.isTypeSupported(type));
+      const recorder = supportedMimeType ? new MediaRecorder(stream, { mimeType: supportedMimeType }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
       audioChunksRef.current = [];
       startTimeRef.current = Date.now();
 
-      mediaRecorderRef.current.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
       };
-
-      mediaRecorderRef.current.onstop = async () => {
+      recorder.onerror = () => showToast('The voice recording failed.', 'error');
+      recorder.onstop = async () => {
         const durationMs = Date.now() - startTimeRef.current;
+        const mimeType = recorder.mimeType || supportedMimeType || 'audio/webm';
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-        if (stream) stream.getTracks().forEach(track => track.stop());
-        
+        stream?.getTracks().forEach((track) => track.stop());
         if (audioBlob.size === 0 || durationMs < 500) {
-          showToast("Recording is too short or empty.", "error");
+          showToast('Recording is too short or empty.', 'error');
           return;
         }
-
         if (audioBlob.size > 15 * 1024 * 1024) {
-          showToast("Recording too large for limits.", "error");
+          showToast('Recording exceeds the 15 MB upload limit.', 'error');
           return;
         }
 
         try {
-          const csrfRes = await api.get('/api/csrf');
-          const csrf = csrfRes?.data;
-
           const formData = new FormData();
-          const fileExt = mimeType.includes('mp4') ? 'mp4' : 'webm';
-          formData.append("file", audioBlob, `voicenote.${fileExt}`);
+          const fileExtension = mimeType.includes('mp4') ? 'm4a' : 'webm';
+          formData.append('file', audioBlob, `voice-note.${fileExtension}`);
           formData.append('recipientEmail', recipientAtRecordStart);
-          
-          const uploadRes = await api.post('/api/chat/upload', formData, { 
-            headers: { 
-              'Content-Type': 'multipart/form-data',
-              [csrf?.headerName || 'X-XSRF-TOKEN']: csrf?.token
-            } 
-          });
-          
-          const mediaUrl = uploadRes.data.url;
-          const sent = sendRichMessage('', 'AUDIO', mediaUrl, recipientAtRecordStart);
-          if (!sent) showToast("Not connected. Voice note not routed.", "error");
-          
-        } catch (err) {
-          console.error(err);
-          showToast("Failed to upload voice note to cloud.", "error");
+          const uploadRes = await api.post('/api/chat/upload', formData);
+          if (!sendRichMessage('', 'AUDIO', uploadRes.data.url, recipientAtRecordStart, uploadRes.data.filename)) {
+            showToast('Realtime connection is unavailable. Voice note was not sent.', 'error');
+          }
+        } catch (error) {
+          showToast(getApiErrorMessage(error, 'Failed to upload the voice note.'), 'error');
         }
       };
 
-      mediaRecorderRef.current.start(1000); 
+      recorder.start(1000);
       setIsRecording(true);
-      isRecordingRef.current = true; 
+      isRecordingRef.current = true;
       setRecordingTime(0);
-
       recordingTimerRef.current = setInterval(() => {
-        setRecordingTime(prev => {
-          if (prev + 1 >= 30) {
-            stopRecording();
-            return prev;
+        setRecordingTime((previous) => {
+          if (previous + 1 >= 30) {
+            setTimeout(() => stopRecording(), 0);
+            return 30;
           }
-          return prev + 1;
+          return previous + 1;
         });
       }, 1000);
-    } catch (err) {
-      showToast("Microphone access denied or failed", "error");
-      if (stream) stream.getTracks().forEach(t => t.stop());
+    } catch (error) {
+      stream?.getTracks().forEach((track) => track.stop());
       isRecordingRef.current = false;
       setIsRecording(false);
+      showToast(error?.name === 'NotAllowedError' ? 'Microphone permission was denied.' : 'Could not start recording.', 'error');
     }
   };
 
@@ -735,91 +782,202 @@ function NeosisChatInner() {
     }
   };
 
-  const sendRichMessage = (text, type = 'TEXT', mediaData = null, explicitRecipient = null) => {
+  const sendRichMessage = (text, type = 'TEXT', mediaData = null, explicitRecipient = null, mediaFilename = null) => {
     const target = explicitRecipient || activeChatRef.current;
-    if (!target || !stompClientRef.current || !stompClientRef.current.connected) return false;
-    
-    const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const uniqueId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Date.now().toString() + Math.random().toString(36).substring(2); 
-    
-    const chatMessage = { 
-      localId: uniqueId, 
-      senderEmail: currentUser.email, 
-      recipientEmail: target, 
-      content: text, 
-      timestamp: timeString,
-      messageType: type, 
-      mediaData: mediaData 
+    const sender = currentUserRef.current?.email;
+    if (!target || !sender || !stompClientRef.current?.connected) return false;
+
+    const localId = typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const chatMessage = {
+      localId,
+      senderEmail: sender,
+      recipientEmail: target,
+      content: text,
+      timestamp: new Date().toISOString(),
+      messageType: type,
+      mediaData,
+      mediaFilename
     };
-    
+
     stompClientRef.current.publish({ destination: '/app/chat.send', body: JSON.stringify(chatMessage) });
-    setMessages((prev) => [...prev, chatMessage]); 
+    if (target === activeChatRef.current) setMessages((previous) => [...previous, chatMessage]);
     return true;
   };
 
-  const handleSendMessage = async (e) => {
-    if (e) e.preventDefault();
-    if (isSending || (newMessage.trim() === '' && !attachment)) return;
-    
+  const handleSendMessage = async (event) => {
+    event?.preventDefault();
+    const text = newMessage.trim();
+    if (isSending || (!text && !attachment)) return;
+    if (!isRealtimeConnected) {
+      showToast('Realtime connection is unavailable. Message not sent.', 'error');
+      return;
+    }
+
     setIsSending(true);
-
     try {
-      let finalMediaUrl = null;
+      let mediaUrl = null;
+      let mediaFilename = null;
       let messageType = 'TEXT';
-
       if (attachment) {
-        const csrfRes = await api.get('/api/csrf');
-        const csrf = csrfRes?.data;
-
         const formData = new FormData();
-        formData.append("file", attachment);
+        formData.append('file', attachment);
         formData.append('recipientEmail', activeChatRef.current);
-
-        const uploadRes = await api.post('/api/chat/upload', formData, { 
-          headers: { 
-            'Content-Type': 'multipart/form-data',
-            [csrf?.headerName || 'X-XSRF-TOKEN']: csrf?.token
-          } 
-        });
-        
-        finalMediaUrl = uploadRes.data.url;
-        
+        const uploadRes = await api.post('/api/chat/upload', formData);
+        mediaUrl = uploadRes.data.url;
+        mediaFilename = uploadRes.data.filename || attachment.name;
         if (attachment.type.startsWith('image/')) messageType = 'IMAGE';
         else if (attachment.type.startsWith('video/')) messageType = 'VIDEO';
+        else if (attachment.type.startsWith('audio/')) messageType = 'AUDIO';
         else messageType = 'DOCUMENT';
       }
 
-      const sent = sendRichMessage(newMessage.trim(), messageType, finalMediaUrl);
-      if (!sent) {
-        showToast("Not connected. Message not sent.", "error");
+      if (!sendRichMessage(text, messageType, mediaUrl, null, mediaFilename)) {
+        showToast('Realtime connection is unavailable. Message not sent.', 'error');
         return;
       }
-      
-      setNewMessage(''); 
+      setNewMessage('');
       removeAttachment();
       setShowEmojiPicker(false);
       if (textareaRef.current) textareaRef.current.style.height = '48px';
       sendTypingStatus(false);
-    } catch (err) {
-      console.error(err);
-      showToast("Media upload failed. Server rejected file.", "error");
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'The attachment upload failed.'), 'error');
     } finally {
       setIsSending(false);
     }
   };
 
   const sendTypingStatus = (isTyping) => {
-    if (!stompClientRef.current || !stompClientRef.current.connected || !activeChatRef.current || !currentUserRef.current) return;
-    stompClientRef.current.publish({ destination: '/app/chat.typing', body: JSON.stringify({ senderEmail: currentUserRef.current.email, recipientEmail: activeChatRef.current, isTyping: isTyping.toString() }) });
+    if (currentUserRef.current?.typingIndicatorsEnabled === false) return;
+    if (!stompClientRef.current?.connected || !activeChatRef.current || !currentUserRef.current?.email) return;
+    stompClientRef.current.publish({
+      destination: '/app/chat.typing',
+      body: JSON.stringify({
+        senderEmail: currentUserRef.current.email,
+        recipientEmail: activeChatRef.current,
+        isTyping: isTyping.toString()
+      })
+    });
   };
-  
-  const handleInputChange = (e) => { 
-    e.target.style.height = '48px'; 
-    e.target.style.height = `${Math.min(e.target.scrollHeight, 128)}px`;
-    setNewMessage(e.target.value); 
-    sendTypingStatus(true); 
-    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current); 
-    typingTimeoutRef.current = setTimeout(() => sendTypingStatus(false), 1500); 
+
+  const handleInputChange = (event) => {
+    event.target.style.height = '48px';
+    event.target.style.height = `${Math.min(event.target.scrollHeight, 128)}px`;
+    setNewMessage(event.target.value);
+    sendTypingStatus(true);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => sendTypingStatus(false), 1500);
+  };
+
+  const activeContact = useMemo(
+    () => friends.find((contact) => contact.email === activeChat) || null,
+    [friends, activeChat]
+  );
+
+  const openSettings = (tab) => {
+    setSettingsInitialTab(tab);
+    setShowSettingsMenu(false);
+    setShowSettingsModal(true);
+  };
+
+  const handleSaveProfile = async (payload) => {
+    try {
+      const response = await api.patch('/api/users/me', payload);
+      setCurrentUser(response.data);
+      setAuthUser(response.data);
+      showToast('Profile updated.', 'success');
+      return response.data;
+    } catch (error) {
+      throw new Error(getApiErrorMessage(error, 'Failed to update the profile.'));
+    }
+  };
+
+  const handleSavePreferences = async (payload) => {
+    try {
+      const response = await api.patch('/api/users/me/preferences', payload);
+      setCurrentUser(response.data);
+      setAuthUser(response.data);
+      showToast('Preferences updated.', 'success');
+      return response.data;
+    } catch (error) {
+      throw new Error(getApiErrorMessage(error, 'Failed to update preferences.'));
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    try {
+      await api.delete('/api/users/me', { data: { confirmation: 'DELETE' } });
+      clearSession();
+      window.location.replace('/login');
+    } catch (error) {
+      throw new Error(getApiErrorMessage(error, 'Failed to delete the account.'));
+    }
+  };
+
+  const updateConversationPreference = async (field, value) => {
+    if (!activeChat) return;
+    try {
+      const response = await api.patch(`/api/conversations/${encodeURIComponent(activeChat)}`, { [field]: value });
+      setFriends((previous) => sortContacts(previous.map((contact) => (
+        contact.email === activeChat ? { ...contact, ...response.data } : contact
+      ))));
+      setShowMoreMenu(false);
+      showToast(field === 'pinned' ? (value ? 'Chat pinned.' : 'Chat unpinned.') : (value ? 'Notifications muted.' : 'Notifications unmuted.'), 'success');
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to update conversation settings.'), 'error');
+    }
+  };
+
+  const runConfirmation = async () => {
+    if (!confirmDialog?.action) return;
+    setIsConfirming(true);
+    try {
+      await confirmDialog.action();
+      setConfirmDialog(null);
+    } catch (error) {
+      showToast(error?.message || 'The operation failed.', 'error');
+    } finally {
+      setIsConfirming(false);
+    }
+  };
+
+  const confirmClearConversation = () => {
+    if (!activeChat) return;
+    setShowMoreMenu(false);
+    setConfirmDialog({
+      title: 'Clear this chat?',
+      description: 'Messages will be hidden from your account on every device. This does not delete the other participant’s copy.',
+      confirmLabel: 'Clear chat',
+      danger: true,
+      action: async () => {
+        await api.delete(`/api/conversations/${encodeURIComponent(activeChat)}/messages`);
+        setMessages([]);
+        setUnreadCounts((previous) => ({ ...previous, [activeChat]: 0 }));
+        setFriends((previous) => previous.map((contact) => contact.email === activeChat ? { ...contact, unreadCount: 0 } : contact));
+        showToast('Chat cleared for your account.', 'success');
+      }
+    });
+  };
+
+  const confirmRemoveContact = () => {
+    if (!activeChat) return;
+    const contactEmail = activeChat;
+    setShowMoreMenu(false);
+    setConfirmDialog({
+      title: 'Remove contact?',
+      description: 'The accepted contact relationship will be removed. Existing stored messages are retained unless you clear them separately.',
+      confirmLabel: 'Remove contact',
+      danger: true,
+      action: async () => {
+        await api.delete(`/api/conversations/${encodeURIComponent(contactEmail)}`);
+        setFriends((previous) => previous.filter((contact) => contact.email !== contactEmail));
+        setActiveChat(null);
+        setMessages([]);
+        showToast('Contact removed.', 'success');
+      }
+    });
   };
 
   const displayedMessages = useMemo(() => { 
@@ -896,6 +1054,29 @@ function NeosisChatInner() {
 
   return (
     <div className="flex h-screen bg-white dark:bg-[#111313] transition-colors duration-300 font-sans relative overflow-hidden p-2 md:p-4">
+      <SettingsModal
+        open={showSettingsModal}
+        initialTab={settingsInitialTab}
+        user={currentUser}
+        isDarkMode={isDarkMode}
+        onClose={() => setShowSettingsModal(false)}
+        onToggleTheme={() => setIsDarkMode((value) => !value)}
+        onSaveProfile={handleSaveProfile}
+        onSavePreferences={handleSavePreferences}
+        onLogout={handleLogout}
+        onDeleteAccount={handleDeleteAccount}
+      />
+      <ContactInfoModal open={showContactInfo} contact={activeContact} onClose={() => setShowContactInfo(false)} />
+      <ConfirmDialog
+        open={Boolean(confirmDialog)}
+        title={confirmDialog?.title}
+        description={confirmDialog?.description}
+        confirmLabel={confirmDialog?.confirmLabel}
+        danger={confirmDialog?.danger}
+        busy={isConfirming}
+        onConfirm={runConfirmation}
+        onClose={() => !isConfirming && setConfirmDialog(null)}
+      />
       <AnimatePresence>
         {!hasAcceptedTC && (
           <motion.div 
@@ -918,7 +1099,7 @@ function NeosisChatInner() {
                 <div className="flex gap-3 items-start">
                   <ShieldAlert size={20} className="text-[#0fa384] flex-shrink-0 mt-0.5" />
                   <div>
-                    <h3 className="font-bold text-gray-900 dark:text-white">End-to-End Encryption</h3>
+                    <h3 className="font-bold text-gray-900 dark:text-white">Encrypted WebRTC calls</h3>
                     <p className="mt-1 leading-relaxed text-gray-500 dark:text-gray-400">All video and audio calls are secured via WebRTC DTLS-SRTP encryption.</p>
                   </div>
                 </div>
@@ -970,7 +1151,10 @@ function NeosisChatInner() {
                   {isVideoCall ? (
                     <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
                   ) : (
-                    <motion.div animate={{ scale: [1, 1.05, 1] }} transition={{ repeat: Infinity, duration: 2 }} className={`w-48 h-48 rounded-full flex items-center justify-center text-6xl font-bold bg-gradient-to-br ${getAvatarGradient(formatName(callPeerEmailRef.current))} shadow-2xl`}>{formatName(callPeerEmailRef.current).charAt(0)}</motion.div>
+                    <>
+                      <audio ref={remoteAudioRef} autoPlay />
+                      <motion.div animate={{ scale: [1, 1.05, 1] }} transition={{ repeat: Infinity, duration: 2 }} className={`w-48 h-48 rounded-full flex items-center justify-center text-6xl font-bold bg-gradient-to-br ${getAvatarGradient(formatName(callPeerEmailRef.current))} shadow-2xl`}>{formatName(callPeerEmailRef.current).charAt(0)}</motion.div>
+                    </>
                   )}
                   {isVideoCall && (
                     <div className="absolute top-6 right-6 w-32 md:w-48 aspect-video bg-[#151817] rounded-xl overflow-hidden shadow-2xl border-2 border-[#232a28]">
@@ -1019,9 +1203,12 @@ function NeosisChatInner() {
                       {pendingRequests.length === 0 ? <div className="p-8 text-sm text-gray-500 dark:text-gray-400 text-center">No pending requests</div> : (
                         <div className="max-h-64 overflow-y-auto custom-scrollbar">
                           {pendingRequests.map(req => (
-                            <div key={req.id} className="p-4 border-b border-gray-100 dark:border-[#232a28]/50 flex justify-between items-center hover:bg-gray-50 dark:hover:bg-[#1a1f1d] transition">
-                              <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate w-2/3">{formatName(req.senderEmail)}</span>
-                              <motion.button aria-label="Accept Request" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => handleAcceptRequest(req.id)} className="bg-[#0fa384] text-white p-2 rounded-lg hover:bg-[#0ba082] transition-colors"><Check size={16}/></motion.button>
+                            <div key={req.id} className="p-4 border-b border-gray-100 dark:border-[#232a28]/50 flex justify-between items-center gap-3 hover:bg-gray-50 dark:hover:bg-[#1a1f1d] transition">
+                              <div className="min-w-0 flex-1"><div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{formatName(req.senderEmail)}</div><div className="text-[11px] text-gray-400 truncate">{req.senderEmail}</div></div>
+                              <div className="flex gap-2">
+                                <motion.button aria-label="Reject Request" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => handleRejectRequest(req.id)} className="bg-gray-100 dark:bg-[#232a28] text-gray-500 dark:text-gray-300 p-2 rounded-lg hover:text-rose-500 transition-colors"><X size={16}/></motion.button>
+                                <motion.button aria-label="Accept Request" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => handleAcceptRequest(req.id)} className="bg-[#0fa384] text-white p-2 rounded-lg hover:bg-[#0ba082] transition-colors"><Check size={16}/></motion.button>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -1040,8 +1227,8 @@ function NeosisChatInner() {
                     <motion.div initial={{ opacity: 0, y: 10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.95 }} transition={{ type: "spring", stiffness: 300, damping: 25 }} className="absolute right-0 top-12 w-56 bg-white dark:bg-[#151817] rounded-xl shadow-2xl border border-gray-200 dark:border-[#323d38] z-50 overflow-hidden">
                       <div className="p-4 border-b border-gray-200 dark:border-[#232a28] text-sm font-bold text-gray-900 dark:text-white">Settings</div>
                       <div className="flex flex-col text-sm text-gray-700 dark:text-gray-300">
-                        <button onClick={() => { setShowSettingsMenu(false); showToast("Account preferences coming soon", "info"); }} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-[#1a1f1d] transition w-full text-left"><UserCog size={16} /> Account</button>
-                        <button onClick={() => { setShowSettingsMenu(false); showToast("Privacy settings coming soon", "info"); }} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-[#1a1f1d] transition w-full text-left"><Shield size={16} /> Privacy</button>
+                        <button onClick={() => openSettings('account')} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-[#1a1f1d] transition w-full text-left"><UserCog size={16} /> Account</button>
+                        <button onClick={() => openSettings('privacy')} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-[#1a1f1d] transition w-full text-left"><Shield size={16} /> Preferences</button>
                         <div className="h-px bg-gray-200 dark:bg-[#232a28] w-full"></div>
                         <button onClick={handleLogout} className="flex items-center gap-3 px-4 py-3 hover:bg-rose-50 dark:hover:bg-[#232a28] text-rose-500 transition w-full text-left font-semibold"><LogOut size={16} /> Log Out</button>
                       </div>
@@ -1055,27 +1242,34 @@ function NeosisChatInner() {
           <div className="px-4 py-4 border-b border-gray-200 dark:border-[#232a28]">
             <form onSubmit={handleSendRequest} className="relative flex items-center">
               <Search size={18} className="absolute left-3 text-gray-400 dark:text-[#0fa384]" />
-              <input type="email" value={addEmailInput} onChange={(e) => setAddEmailInput(e.target.value)} placeholder="Search contacts..." className="w-full bg-white dark:bg-[#111313] text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 rounded-lg pl-10 pr-10 py-2.5 text-sm outline-none focus:border-[#0fa384] transition-colors border border-gray-300 dark:border-[#323d38] shadow-sm dark:shadow-none" required />
+              <input type="email" value={addEmailInput} onChange={(e) => setAddEmailInput(e.target.value)} placeholder="Add contact by email..." className="w-full bg-white dark:bg-[#111313] text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 rounded-lg pl-10 pr-10 py-2.5 text-sm outline-none focus:border-[#0fa384] transition-colors border border-gray-300 dark:border-[#323d38] shadow-sm dark:shadow-none" required />
               <button aria-label="Add Contact" type="submit" className="absolute right-2 text-gray-400 dark:text-[#0fa384] p-1 hover:bg-gray-100 dark:hover:bg-[#232a28] rounded-md transition-colors"><UserPlus size={18}/></button>
             </form>
           </div>
 
           <motion.div variants={listVariants} initial="hidden" animate="show" className="flex-1 overflow-y-auto custom-scrollbar contain-content">
-            {friends.map(friend => {
-              const fName = formatName(friend);
-              const isActive = activeChat === friend;
+            {friends.map((friend) => {
+              const email = getContactEmail(friend);
+              const fName = getContactName(friend);
+              const isActive = activeChat === email;
+              const unread = Number(unreadCounts[email] || friend.unreadCount || 0);
               return (
-                <motion.div variants={itemVariants} key={friend} onClick={() => handleOpenChat(friend)} className={`relative flex items-center gap-3.5 p-4 cursor-pointer transition-all duration-150 ${isActive ? 'bg-gray-100 dark:bg-[#1f2422]' : 'hover:bg-gray-50 dark:hover:bg-[#151817]'}`}>
+                <motion.div variants={itemVariants} key={email} onClick={() => handleOpenChat(email)} className={`relative flex items-center gap-3.5 p-4 cursor-pointer transition-all duration-150 ${isActive ? 'bg-gray-100 dark:bg-[#1f2422]' : 'hover:bg-gray-50 dark:hover:bg-[#151817]'}`}>
                   {isActive && <motion.div layoutId="activeIndicator" className="absolute left-0 top-0 bottom-0 w-1 bg-[#0fa384]" transition={{ type: "spring", stiffness: 300, damping: 30 }} />}
                   <div className="relative">
                     <div className={`w-12 h-12 bg-gradient-to-br ${getAvatarGradient(fName)} rounded-full flex items-center justify-center text-white font-bold text-lg`}>{fName.charAt(0).toUpperCase()}</div>
-                    <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-[#0fa384] rounded-full border-2 border-white dark:border-[#1a1f1d] transition-colors duration-300"></div>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-baseline mb-0.5"><div className="font-medium text-gray-900 dark:text-gray-100 truncate text-[15px]">{fName}</div></div>
-                    <div className="flex justify-between items-center">
-                      <div className="text-xs text-gray-500 dark:text-gray-400 truncate">Tap to view conversation...</div>
-                      {unreadCounts[friend] > 0 && <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="bg-[#ff8f24] text-white text-[10px] font-bold px-2 py-0.5 rounded-full">{unreadCounts[friend]}</motion.div>}
+                    <div className="flex justify-between items-center mb-0.5">
+                      <div className="font-medium text-gray-900 dark:text-gray-100 truncate text-[15px]">{fName}</div>
+                      <div className="flex items-center gap-1.5 text-gray-400">
+                        {friend.pinned && <Pin size={13} className="text-[#0fa384]" aria-label="Pinned" />}
+                        {friend.muted && <BellOff size={13} aria-label="Muted" />}
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center gap-2">
+                      <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{friend.statusMessage || 'Available on Neosis'}</div>
+                      {unread > 0 && <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="bg-[#ff8f24] text-white text-[10px] font-bold px-2 py-0.5 rounded-full">{unread > 99 ? '99+' : unread}</motion.div>}
                     </div>
                   </div>
                 </motion.div>
@@ -1085,10 +1279,15 @@ function NeosisChatInner() {
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-10 flex flex-col items-center justify-center text-gray-500 text-center px-6">
                 <motion.div animate={{ y: [0, -10, 0] }} transition={{ repeat: Infinity, duration: 3, ease: "easeInOut" }} className="w-16 h-16 bg-white dark:bg-[#151817] shadow-sm dark:shadow-none rounded-2xl flex items-center justify-center mb-4 transition-colors"><UserPlus size={24} className="text-gray-400 dark:text-[#0fa384]" /></motion.div>
                 <h3 className="text-gray-900 dark:text-gray-200 font-medium mb-1 font-display">No chats yet</h3>
-                <p className="text-xs leading-relaxed dark:text-gray-500">Search for a friend's email above to start a secure conversation.</p>
+                <p className="text-xs leading-relaxed dark:text-gray-500">Add a contact by email to start a conversation.</p>
               </motion.div>
             )}
           </motion.div>
+          <button type="button" onClick={() => openSettings('account')} className="p-4 border-t border-gray-200 dark:border-[#232a28] flex items-center gap-3 text-left hover:bg-gray-100 dark:hover:bg-[#151817] transition-colors">
+            <div className={`w-10 h-10 rounded-full bg-gradient-to-br ${getAvatarGradient(currentUser.name || currentUser.email)} flex items-center justify-center text-white font-bold`}>{(currentUser.name || currentUser.email || '?').charAt(0).toUpperCase()}</div>
+            <div className="min-w-0 flex-1"><div className="text-sm font-semibold text-gray-900 dark:text-white truncate">{currentUser.name || formatName(currentUser.email)}</div><div className="text-xs text-gray-500 dark:text-gray-400 truncate">{currentUser.statusMessage || 'Available on Neosis'}</div></div>
+            <span className={`w-2.5 h-2.5 rounded-full ${isRealtimeConnected ? 'bg-[#0fa384]' : 'bg-amber-500'}`} title={isRealtimeConnected ? 'Realtime connected' : 'Reconnecting'} />
+          </button>
         </div>
 
         <div className={`${!activeChat ? 'hidden md:flex' : 'flex'} flex-1 flex-col bg-white dark:bg-[#111313] relative transition-colors duration-300`}>
@@ -1096,21 +1295,20 @@ function NeosisChatInner() {
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="flex-1 flex flex-col items-center justify-center relative z-10 text-gray-500 dark:text-gray-400">
               <motion.div animate={{ y: [0, -15, 0] }} transition={{ repeat: Infinity, duration: 4, ease: "easeInOut" }} className="w-24 h-24 bg-gray-50 dark:bg-[#1a1f1d] rounded-full flex items-center justify-center mb-6 shadow-inner border border-gray-100 dark:border-[#232a28]"><MessageSquare size={40} className="text-gray-400 dark:text-[#0fa384]" /></motion.div>
               <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 font-display">Neosis Web</h2>
-              <p className="text-sm max-w-sm text-center leading-relaxed">Select a contact from the sidebar to start a secure, end-to-end encrypted conversation.</p>
+              <p className="text-sm max-w-sm text-center leading-relaxed">Select a contact from the sidebar to open a private, authenticated conversation.</p>
             </motion.div>
           ) : (
             <div className="flex flex-col h-full relative z-10">
               <div className="px-6 py-4 bg-white dark:bg-[#1a1f1d] border-b border-gray-200 dark:border-[#232a28] flex items-center justify-between z-20 transition-colors">
                 <div className="flex items-center gap-4">
                   <motion.button aria-label="Go Back" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => setActiveChat(null)} className="md:hidden text-gray-400 dark:hover:text-white transition"><ArrowLeft size={24} /></motion.button>
-                  <div className="relative">
-                    <div className={`w-11 h-11 bg-gradient-to-br ${getAvatarGradient(formatName(activeChat))} rounded-full flex items-center justify-center text-white font-bold text-lg shadow-sm`}>{formatName(activeChat).charAt(0).toUpperCase()}</div>
-                    <div className="absolute bottom-0 right-0 w-3 h-3 bg-[#0fa384] rounded-full border-2 border-white dark:border-[#1a1f1d] transition-colors"></div>
-                  </div>
-                  <div>
-                    <div className="font-bold text-gray-900 dark:text-white text-[16px]">{formatName(activeChat)}</div>
-                    <div className="text-[12px] font-medium text-[#0fa384] flex items-center gap-1.5 mt-0.5">{isRemoteTyping ? <span className="italic animate-pulse">typing...</span> : "Online"}</div>
-                  </div>
+                  <button type="button" onClick={() => setShowContactInfo(true)} className="relative" aria-label="Open contact information">
+                    <div className={`w-11 h-11 bg-gradient-to-br ${getAvatarGradient(getContactName(activeContact || activeChat))} rounded-full flex items-center justify-center text-white font-bold text-lg shadow-sm`}>{getContactName(activeContact || activeChat).charAt(0).toUpperCase()}</div>
+                  </button>
+                  <button type="button" onClick={() => setShowContactInfo(true)} className="text-left min-w-0">
+                    <div className="font-bold text-gray-900 dark:text-white text-[16px] truncate">{getContactName(activeContact || activeChat)}</div>
+                    <div className={`text-[12px] font-medium flex items-center gap-1.5 mt-0.5 ${isRealtimeConnected ? 'text-[#0fa384]' : 'text-amber-500'}`}>{isRemoteTyping ? <span className="italic animate-pulse">typing...</span> : (isRealtimeConnected ? (activeContact?.statusMessage || 'Available on Neosis') : 'Reconnecting…')}</div>
+                  </button>
                 </div>
 
                 <div className="flex items-center gap-2 text-gray-400 dark:text-gray-400">
@@ -1124,8 +1322,12 @@ function NeosisChatInner() {
                       {showMoreMenu && (
                         <motion.div initial={{ opacity: 0, y: 10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.95 }} transition={{ type: "spring", stiffness: 300, damping: 25 }} className="absolute right-0 top-10 w-48 bg-white dark:bg-[#151817] rounded-xl shadow-xl border border-gray-200 dark:border-[#323d38] overflow-hidden z-50">
                           <div className="flex flex-col text-sm text-gray-700 dark:text-gray-200">
-                            <button onClick={() => showToast("Contact profiles coming soon", "info")} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-[#1a1f1d] transition w-full text-left"><User size={16} /> Contact Info</button>
-                            <button onClick={() => { setMessages([]); setShowMoreMenu(false); showToast("Local chat view cleared"); }} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-[#1a1f1d] transition w-full text-left"><Trash2 size={16} /> Clear Local Chat</button>
+                            <button onClick={() => { setShowMoreMenu(false); setShowContactInfo(true); }} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-[#1a1f1d] transition w-full text-left"><User size={16} /> Contact info</button>
+                            <button onClick={() => updateConversationPreference('pinned', !activeContact?.pinned)} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-[#1a1f1d] transition w-full text-left"><Pin size={16} /> {activeContact?.pinned ? 'Unpin chat' : 'Pin chat'}</button>
+                            <button onClick={() => updateConversationPreference('muted', !activeContact?.muted)} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-[#1a1f1d] transition w-full text-left">{activeContact?.muted ? <BellRing size={16} /> : <BellOff size={16} />} {activeContact?.muted ? 'Unmute notifications' : 'Mute notifications'}</button>
+                            <button onClick={confirmClearConversation} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-[#1a1f1d] transition w-full text-left"><Trash2 size={16} /> Clear chat</button>
+                            <div className="h-px bg-gray-200 dark:bg-[#232a28]" />
+                            <button onClick={confirmRemoveContact} className="flex items-center gap-3 px-4 py-3 hover:bg-rose-50 dark:hover:bg-rose-500/10 text-rose-500 transition w-full text-left"><UserMinus size={16} /> Remove contact</button>
                           </div>
                         </motion.div>
                       )}
@@ -1168,9 +1370,9 @@ function NeosisChatInner() {
                           <div className={`flex flex-col max-w-[85%] md:max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
                             <div className={`px-4 py-2.5 text-[15px] leading-relaxed shadow-sm break-words ${isMe ? 'bg-[#0fa384] text-white rounded-2xl rounded-br-sm' : 'bg-gray-100 dark:bg-[#232a28] text-gray-900 dark:text-gray-200 rounded-2xl rounded-tl-sm transition-colors'}`}>
                               
-                              {msg.messageType === 'IMAGE' && <img src={resolveMediaUrl(msg.mediaData)} alt="attachment" className="rounded-lg max-w-full h-auto mb-2 object-cover" />}
-                              {msg.messageType === 'VIDEO' && <video src={resolveMediaUrl(msg.mediaData)} controls className="rounded-lg max-w-full h-auto mb-2" />}
-                              {msg.messageType === 'AUDIO' && <audio src={resolveMediaUrl(msg.mediaData)} controls className="mb-2 max-w-[240px] h-10 rounded-full" />}
+                              {msg.messageType === 'IMAGE' && <img src={resolveMediaUrl(msg.mediaData)} crossOrigin="use-credentials" alt="attachment" className="rounded-lg max-w-full h-auto mb-2 object-cover" />}
+                              {msg.messageType === 'VIDEO' && <video src={resolveMediaUrl(msg.mediaData)} crossOrigin="use-credentials" controls className="rounded-lg max-w-full h-auto mb-2" />}
+                              {msg.messageType === 'AUDIO' && <audio src={resolveMediaUrl(msg.mediaData)} crossOrigin="use-credentials" controls className="mb-2 max-w-[240px] h-10 rounded-full" />}
                               
                               {msg.messageType === 'DOCUMENT' && (
                                 <a href={resolveMediaUrl(msg.mediaData)} download={msg.mediaFilename || "Neosis_Document"} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 mb-2 p-3 bg-black/20 rounded-xl hover:bg-black/30 transition-colors text-white border border-[#323d38] cursor-pointer no-underline">
@@ -1182,8 +1384,8 @@ function NeosisChatInner() {
                               {isSearching && searchQuery && rawContent ? highlightText(rawContent, searchQuery) : rawContent}
                             </div>
                             <span className="text-[10px] text-gray-400 dark:text-gray-500 mt-1 font-medium px-1 flex items-center gap-1 font-mono">
-                              {msg.timestamp || 'Just now'} 
-                              {isMe && (isPending ? <Loader2 size={12} className="text-gray-300 dark:text-gray-600 animate-spin" /> : <CheckCheck size={14} className="text-[#0fa384]" />)}
+                              {formatMessageTime(msg)} 
+                              {isMe && (isPending ? <Loader2 size={12} className="text-gray-300 dark:text-gray-600 animate-spin" /> : (msg.readAt ? <CheckCheck size={14} className="text-[#0fa384]" aria-label="Read" /> : <Check size={13} className="text-gray-400" aria-label="Delivered" />))}
                             </span>
                           </div>
                         </motion.div>
@@ -1236,7 +1438,7 @@ function NeosisChatInner() {
                 ) : (
                   <form onSubmit={handleSendMessage} className="flex items-end gap-3 max-w-5xl mx-auto w-full">
                     <div className="flex items-center gap-1 pb-1.5">
-                      <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} accept="image/*,video/*,.pdf,.doc,.docx,.txt" />
+                      <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,.pdf,.doc,.docx,.txt,.csv,.xls,.xlsx,.ppt,.pptx" />
                       <button type="button" onClick={() => fileInputRef.current.click()} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white dark:hover:bg-[#232a28] rounded-lg transition-colors"><Paperclip size={20}/></button>
                       <button type="button" onClick={() => {
                         if (!showEmojiPicker && attachmentPreview) {}

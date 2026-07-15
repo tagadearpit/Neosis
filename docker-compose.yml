@@ -1,0 +1,43 @@
+services:
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    volumes:
+      - neosis_mongo:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./neosis-backend
+    restart: unless-stopped
+    environment:
+      PORT: 8080
+      MONGO_URI: mongodb://mongo:27017/neosis
+      FRONTEND_URL: http://localhost:5173
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?Set GOOGLE_CLIENT_ID in .env}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?Set GOOGLE_CLIENT_SECRET in .env}
+      SESSION_COOKIE_SECURE: "false"
+      SESSION_COOKIE_SAME_SITE: lax
+    ports:
+      - "8080:8080"
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./neosis-frontend
+      args:
+        VITE_BACKEND_URL: http://localhost:8080
+    restart: unless-stopped
+    ports:
+      - "5173:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  neosis_mongo:

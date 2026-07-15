@@ -1,131 +1,113 @@
-# Neosis — Secure Real-Time Messaging Platform
+# Neosis
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Frontend-React%20%2B%20Vite-61DAFB?style=for-the-badge&logo=react&logoColor=black" />
-  <img src="https://img.shields.io/badge/Backend-Spring%20Boot-6DB33F?style=for-the-badge&logo=springboot&logoColor=white" />
-  <img src="https://img.shields.io/badge/Database-MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white" />
-  <img src="https://img.shields.io/badge/WebSocket-STOMP-111827?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/Auth-Google%20OAuth2-4285F4?style=for-the-badge&logo=google&logoColor=white" />
-</p>
+Neosis is a full-stack private messaging application built with React, Spring Boot, MongoDB, STOMP/SockJS, Google OAuth 2.0, GridFS, and WebRTC.
 
-<p align="center">
-  <b>Neosis</b> is a real-time web messaging application built with React, Spring Boot, WebSockets, MongoDB, Google OAuth2, media sharing, document upload, and WebRTC audio/video calls.
-</p>
+## Included capabilities
 
-<p align="center">
-  <a href="https://neosis-static-site.onrender.com">Live Frontend</a>
-  ·
-  <a href="https://neosis-433w.onrender.com">Live Backend</a>
-</p>
+- Persistent Google OAuth login backed by MongoDB Spring Session
+- Profile settings: display name, status message, notification sounds, typing indicators
+- Permanent account deletion with user-scoped message, media, contact, preference, and session cleanup
+- Contact requests with accept and reject flows
+- Persistent conversation pin, mute, unread count, clear-for-me, and remove-contact controls
+- Text, image, video, audio, and document messages
+- Read receipts and typing indicators
+- Audio/video calls with configurable TURN support
+- CSRF protection, credentialed CORS, HTTP and WebSocket rate limits, validation, upload limits, health endpoints, and graceful shutdown
+- PWA frontend with reproducible Docker packaging
 
----
+## Security boundary
 
-## Overview
+Text messages and media are encrypted in transit by HTTPS/WSS in production, but they are **not end-to-end encrypted**. The backend stores chat messages in MongoDB and media in GridFS. WebRTC audio/video transport uses DTLS-SRTP. Do not market text chat as E2EE unless a separately audited client-side cryptographic protocol is implemented.
 
-Neosis is designed as a modern secure messaging platform with a full-stack architecture.  
-The frontend is built with React, Vite, Tailwind CSS, Framer Motion, STOMP, SockJS, and Axios.  
-The backend is built with Spring Boot, Spring Security, OAuth2 Login, WebSocket/STOMP, MongoDB, GridFS, and REST APIs.
+## Local development
 
-The app supports authenticated users, contact requests, real-time messaging, typing indicators, media/document uploads, voice notes, and WebRTC-based audio/video calls.
+### Prerequisites
 
----
+- Java 17+
+- Maven 3.9+
+- Node.js 20.19–22
+- MongoDB 7+
+- A Google OAuth 2.0 web client
 
-## Features
+Configure the Google OAuth redirect URI:
 
-### Authentication
+```text
+http://localhost:8080/login/oauth2/code/google
+```
 
-- Google OAuth2 login
-- Cookie-based authenticated session
-- Secure cross-origin frontend/backend communication
-- CSRF-protected unsafe HTTP requests
+Backend:
 
-### Real-Time Chat
+```bash
+cd neosis-backend
+cp .env.example .env
+set -a && source .env && set +a
+mvn spring-boot:run
+```
 
-- WebSocket/STOMP messaging
-- One-to-one conversations
-- Live message delivery
-- Typing indicators
-- Unread message counts
-- Chat history loading
+Frontend:
 
-### Contact System
+```bash
+cd neosis-frontend
+cp .env.example .env
+npm ci
+npm run dev
+```
 
-- Add users by email
-- Send contact requests
-- Accept pending requests
-- Duplicate/self-request protection
-- Contact-based chat access
+Open `http://localhost:5173`.
 
-### Media and Documents
+## Docker Compose
 
-- Image upload
-- Video upload
-- Audio/voice-note upload
-- Document upload
-- GridFS-backed file storage
-- Server-side ownership checks for media access
+Create a root `.env` from `.env.example`, set the Google OAuth credentials, then run:
 
-### Calls
+```bash
+docker compose up --build
+```
 
-- Audio calls
-- Video calls
-- WebRTC signaling over WebSocket
-- STUN support
-- Optional TURN server configuration
+The frontend is served on `http://localhost:5173`, the API on `http://localhost:8080`, and MongoDB is kept in the `neosis_mongo` volume.
 
-### UI/UX
+## Production environment
 
-- Modern dark-mode interface
-- Responsive chat layout
-- Animated transitions with Framer Motion
-- Emoji picker
-- Attachment preview
-- Terms and privacy acceptance modal
-- Toast notifications
+Required backend variables:
 
----
-
-## Tech Stack
-
-### Frontend
-
-| Layer | Technology |
+| Variable | Purpose |
 |---|---|
-| Framework | React |
-| Build Tool | Vite |
-| Styling | Tailwind CSS |
-| Motion | Framer Motion |
-| Icons | Lucide React |
-| HTTP Client | Axios |
-| WebSocket Client | STOMP + SockJS |
-| PWA | vite-plugin-pwa |
+| `MONGO_URI` | MongoDB connection URI |
+| `FRONTEND_URL` | Exact HTTPS frontend origin |
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
+| `SESSION_COOKIE_SECURE` | Must be `true` in production |
+| `SESSION_COOKIE_SAME_SITE` | Use `none` for cross-site frontend/API deployments |
 
-### Backend
+Frontend build variables:
 
-| Layer | Technology |
+| Variable | Purpose |
 |---|---|
-| Framework | Spring Boot |
-| Security | Spring Security |
-| Auth | Google OAuth2 |
-| Realtime | WebSocket + STOMP |
-| Database | MongoDB Atlas |
-| File Storage | MongoDB GridFS |
-| Build Tool | Maven |
-| Runtime | Java 17 |
+| `VITE_BACKEND_URL` | Public HTTPS backend URL |
+| `VITE_TURN_URL` | TURN URL for reliable calls |
+| `VITE_TURN_USERNAME` | TURN username |
+| `VITE_TURN_CREDENTIAL` | TURN credential |
 
-### Deployment
+Production Google OAuth must include:
 
-| Service | Platform |
-|---|---|
-| Frontend | Render Static Site |
-| Backend | Render Web Service |
-| Database | MongoDB Atlas |
+```text
+https://YOUR_BACKEND_HOST/login/oauth2/code/google
+```
 
----
+## Validation commands
 
-## Live Deployment
+```bash
+cd neosis-frontend && npm ci && npm run build
+cd neosis-backend && mvn clean verify
+```
 
-### Frontend
+The Docker backend image also runs `mvn clean verify` during its build.
 
-```txt
-https://neosis-static-site.onrender.com
+## Deployment notes
+
+- Use HTTPS for both frontend and backend. `SameSite=None` cookies are rejected by browsers unless `Secure=true`.
+- Configure a TURN service; public STUN alone does not make WebRTC reliable across enterprise/mobile NATs.
+- Use a MongoDB replica set if account deletion must be transactionally atomic.
+- The embedded STOMP broker and in-memory rate-limit buckets are single-instance components. Multi-instance deployment requires a shared broker and distributed rate limiter.
+- Add malware scanning and content-signature validation before enabling public/untrusted file uploads at scale.
+
+See [`PRODUCTION_AUDIT.md`](PRODUCTION_AUDIT.md) for implemented controls and remaining production risks.

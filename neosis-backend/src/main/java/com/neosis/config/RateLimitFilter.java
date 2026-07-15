@@ -26,6 +26,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         int limit = limitFor(request.getMethod(), path);
         if (limit > 0 && !allow(request, path, limit)) {
             response.setStatus(429);
+            response.setHeader("Retry-After", "60");
             response.setContentType("application/json");
             response.getWriter().write("{\"error\":\"Too many requests. Try again shortly.\"}");
             return;
@@ -37,6 +38,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private int limitFor(String method, String path) {
         if ("POST".equalsIgnoreCase(method) && path.equals("/api/chat/upload")) return 20;
         if ("POST".equalsIgnoreCase(method) && path.equals("/api/contacts/request")) return 30;
+        if ("POST".equalsIgnoreCase(method) && (path.equals("/api/contacts/accept") || path.equals("/api/contacts/reject"))) return 60;
+        if ("PATCH".equalsIgnoreCase(method) && path.startsWith("/api/users/")) return 30;
+        if ("DELETE".equalsIgnoreCase(method) && path.equals("/api/users/me")) return 5;
+        if ("DELETE".equalsIgnoreCase(method) && path.startsWith("/api/conversations/")) return 30;
         if ("GET".equalsIgnoreCase(method) && path.equals("/api/users/check")) return 60;
         return -1;
     }

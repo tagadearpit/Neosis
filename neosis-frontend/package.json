@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check": "npm run build"
   },
   "dependencies": {
     "@stomp/stompjs": "7.3.0",
@@ -28,6 +29,6 @@
     "vite": "7.3.6"
   },
   "engines": {
-    "node": "20.19.0"
+    "node": ">=20.19 <23"
   }
 }

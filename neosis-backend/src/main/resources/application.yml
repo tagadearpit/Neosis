@@ -1,11 +1,19 @@
 server:
-  port: 8080
-  forward-headers-strategy: framework 
+  port: ${PORT:8080}
+  shutdown: graceful
+  forward-headers-strategy: framework
+  compression:
+    enabled: true
+    mime-types: application/json,text/plain,text/css,application/javascript
   servlet:
     session:
+      timeout: 30d
       cookie:
-        same-site: none 
-        secure: true 
+        name: NEOSIS_SESSION
+        http-only: true
+        same-site: ${SESSION_COOKIE_SAME_SITE:none}
+        secure: ${SESSION_COOKIE_SECURE:true}
+        max-age: 30d
 
 app:
   frontend:
@@ -14,22 +22,20 @@ app:
 spring:
   application:
     name: neosis-backend
-    
-  # ==========================================================
-  # CRITICAL FIX: Bypass Tomcat's default 1MB upload limit
-  # This allows the backend to accept your 15MB file payloads
-  # ==========================================================
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
   servlet:
     multipart:
-      max-file-size: 20MB
-      max-request-size: 25MB
-  
-  # CRITICAL FIX: MongoDB Connection String
+      max-file-size: 15MB
+      max-request-size: 16MB
   data:
     mongodb:
       uri: ${MONGO_URI:mongodb://localhost:27017/neosis}
       auto-index-creation: true
-
+  session:
+    timeout: 30d
+    mongodb:
+      collection-name: neosis_sessions
   security:
     oauth2:
       client:
@@ -50,3 +56,9 @@ management:
     health:
       probes:
         enabled: true
+      show-details: never
+
+logging:
+  level:
+    root: INFO
+    org.springframework.security: WARN
