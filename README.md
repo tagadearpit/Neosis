@@ -1,50 +1,341 @@
-# Neosis
+<p align="center">
+  <img
+    src="https://capsule-render.vercel.app/api?type=waving&color=0:0f172a,45:0f766e,100:34d399&height=220&section=header&text=NEOSIS&fontSize=72&fontColor=ffffff&animation=fadeIn&fontAlignY=38&desc=Private%20real-time%20communication%20for%20the%20modern%20web&descAlignY=60&descSize=18"
+    width="100%"
+    alt="Neosis animated header"
+  />
+</p>
 
-Neosis is a full-stack private messaging application built with React, Spring Boot, MongoDB, STOMP/SockJS, Google OAuth 2.0, GridFS, and WebRTC.
+<p align="center">
+  <a href="https://neosis-static-site.onrender.com">
+    <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=20&duration=2800&pause=900&color=34D399&center=true&vCenter=true&width=760&lines=Real-time+messaging+with+Spring+Boot+and+React;Persistent+sessions%2C+media+sharing+and+WebRTC+calls;Designed+for+secure%2C+maintainable+production+deployment" alt="Neosis animated introduction" />
+  </a>
+</p>
 
-## Included capabilities
+<p align="center">
+  <a href="https://neosis-static-site.onrender.com"><strong>🌐 Open Live Application</strong></a>
+  &nbsp;•&nbsp;
+  <a href="#-quick-start"><strong>🚀 Quick Start</strong></a>
+  &nbsp;•&nbsp;
+  <a href="#-deployment"><strong>☁️ Deployment</strong></a>
+  &nbsp;•&nbsp;
+  <a href="neosis-github-wiki/Home.md"><strong>📚 Documentation</strong></a>
+</p>
 
-- Persistent Google OAuth login backed by MongoDB Spring Session
-- Profile settings: display name, status message, notification sounds, typing indicators
-- Permanent account deletion with user-scoped message, media, contact, preference, and session cleanup
-- Contact requests with accept and reject flows
-- Persistent conversation pin, mute, unread count, clear-for-me, and remove-contact controls
-- Text, image, video, audio, and document messages
-- Read receipts and typing indicators
-- Audio/video calls with configurable TURN support
-- CSRF protection, credentialed CORS, HTTP and WebSocket rate limits, validation, upload limits, health endpoints, and graceful shutdown
-- PWA frontend with reproducible Docker packaging
+<p align="center">
+  <img src="https://img.shields.io/badge/React-18.2-61DAFB?logo=react&logoColor=white" alt="React 18.2" />
+  <img src="https://img.shields.io/badge/Vite-7.3-646CFF?logo=vite&logoColor=white" alt="Vite 7.3" />
+  <img src="https://img.shields.io/badge/Spring_Boot-3.2-6DB33F?logo=springboot&logoColor=white" alt="Spring Boot 3.2" />
+  <img src="https://img.shields.io/badge/Java-17-ED8B00?logo=openjdk&logoColor=white" alt="Java 17" />
+  <img src="https://img.shields.io/badge/MongoDB-7-47A248?logo=mongodb&logoColor=white" alt="MongoDB 7" />
+  <img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white" alt="Docker ready" />
+  <img src="https://img.shields.io/badge/License-MIT-22C55E" alt="MIT License" />
+</p>
 
-## Security boundary
+---
 
-Text messages and media are encrypted in transit by HTTPS/WSS in production, but they are **not end-to-end encrypted**. The backend stores chat messages in MongoDB and media in GridFS. WebRTC audio/video transport uses DTLS-SRTP. Do not market text chat as E2EE unless a separately audited client-side cryptographic protocol is implemented.
+## ✨ Overview
 
-## Local development
+**Neosis** is a full-stack private messaging platform built for real-time conversations, media sharing, persistent authentication, and browser-based audio/video communication.
+
+The application combines a responsive React PWA with a Spring Boot API, MongoDB persistence, STOMP/SockJS messaging, Google OAuth 2.0 authentication, GridFS media storage, and WebRTC calls.
+
+Neosis is structured as two independently deployable services:
+
+- **Frontend:** React, Vite, Tailwind CSS, Framer Motion and PWA support
+- **Backend:** Java 17, Spring Boot, Spring Security, WebSocket/STOMP and MongoDB
+
+> [!IMPORTANT]
+> Neosis protects traffic using HTTPS/WSS in production, but text messages and uploaded media are **not end-to-end encrypted**. The backend can access stored content. Do not describe this project as E2EE unless an independently reviewed client-side cryptographic protocol is added.
+
+---
+
+## 🧭 Table of Contents
+
+- [Features](#-features)
+- [Technology Stack](#-technology-stack)
+- [System Architecture](#-system-architecture)
+- [Project Structure](#-project-structure)
+- [Quick Start](#-quick-start)
+- [Environment Variables](#-environment-variables)
+- [Google OAuth Setup](#-google-oauth-setup)
+- [Docker Setup](#-docker-setup)
+- [Deployment](#-deployment)
+- [API Overview](#-api-overview)
+- [Security Model](#-security-model)
+- [Validation and Testing](#-validation-and-testing)
+- [Operational Notes](#-operational-notes)
+- [Troubleshooting](#-troubleshooting)
+- [Roadmap](#-roadmap)
+- [Contributing](#-contributing)
+- [License](#-license)
+
+---
+
+## 🚀 Features
+
+### 💬 Real-time messaging
+
+- One-to-one text conversations
+- STOMP messaging over SockJS/WebSocket
+- Persistent MongoDB message history
+- Typing indicators
+- Read receipts
+- Unread message counters
+- Optimistic message rendering
+- Server-backed conversation clearing
+
+### 📎 Media and file sharing
+
+- Images
+- Videos
+- Audio files
+- Voice notes
+- Documents
+- Authenticated media retrieval
+- Configurable upload-size restrictions
+- MongoDB GridFS storage
+
+### 📌 Conversation management
+
+- Pin and unpin chats
+- Mute and unmute conversations
+- Clear messages for the current user
+- Remove contacts
+- Contact information panel
+- Persistent per-user conversation preferences
+
+### 👥 Contact workflow
+
+- Send contact requests
+- View pending requests
+- Accept or reject requests
+- View connected contacts
+- Remove existing contacts
+
+### 📞 Audio and video calls
+
+- Browser-to-browser WebRTC calling
+- Audio and video call modes
+- STOMP-based signaling
+- Incoming-call acceptance or rejection
+- Busy-state handling
+- Camera and microphone permission handling
+- Configurable STUN/TURN infrastructure
+
+### 🔐 Authentication and account controls
+
+- Google OAuth 2.0 login
+- Persistent MongoDB-backed sessions
+- Secure HttpOnly session cookies
+- User profile editing
+- Display-name and status updates
+- Notification-sound preference
+- Typing-indicator preference
+- Secure logout
+- Permanent account deletion
+- User-scoped cleanup of messages, media, contacts, preferences and sessions
+
+### 📱 User experience
+
+- Responsive desktop and mobile interface
+- Installable Progressive Web App
+- Animated authentication/session loader
+- Accessible confirmation dialogs
+- Notification sounds
+- Reduced-motion support
+- SPA navigation with deployment-safe rewrites
+
+### 🛡️ Production controls
+
+- Session-backed CSRF protection
+- Credentialed CORS allowlisting
+- HTTP rate limiting
+- WebSocket rate limiting
+- Bean validation and centralized error handling
+- File-size and MIME-type restrictions
+- Graceful shutdown
+- Spring Boot health probes
+- Non-root Docker runtime images
+- Automated dependency updates with Dependabot
+
+---
+
+## 🧰 Technology Stack
+
+| Layer | Technologies |
+|---|---|
+| Frontend | React 18, Vite 7, Tailwind CSS 4, Framer Motion, Lucide React |
+| State and routing | React Context, React Router |
+| HTTP client | Axios |
+| Real-time transport | STOMP, SockJS, WebSocket |
+| Calls | WebRTC, STUN and optional TURN |
+| PWA | Vite PWA plugin, service worker, web manifest |
+| Backend | Java 17, Spring Boot 3.2 |
+| Security | Spring Security, OAuth 2.0, CSRF, secure sessions |
+| Data | MongoDB, Spring Data MongoDB, GridFS |
+| Session store | Spring Session Data MongoDB |
+| Operations | Actuator, Docker, Docker Compose, GitHub Actions |
+| Hosting | Render Static Site + Render Web Service |
+
+---
+
+## 🏗️ System Architecture
+
+```mermaid
+flowchart LR
+    U[User Browser / PWA]
+    F[React + Vite Frontend]
+    A[Spring Boot API]
+    W[STOMP / SockJS Gateway]
+    O[Google OAuth 2.0]
+    M[(MongoDB)]
+    G[(GridFS Media)]
+    R[STUN / TURN]
+    P[Peer Browser]
+
+    U --> F
+    F -->|HTTPS REST + Session Cookie| A
+    F <-->|WSS Real-time Events| W
+    W --> A
+    A <-->|OAuth flow| O
+    A --> M
+    A --> G
+    F <-->|WebRTC Media| P
+    F -. ICE negotiation .-> R
+    P -. ICE negotiation .-> R
+```
+
+### Request flow
+
+1. The browser starts Google OAuth through the Spring Boot backend.
+2. The backend creates a server-side session stored in MongoDB.
+3. The browser receives only a secure HttpOnly session cookie.
+4. REST APIs handle users, contacts, conversation preferences, history and uploads.
+5. STOMP/WebSocket handles messages, typing events and WebRTC signaling.
+6. WebRTC sends call media directly between peers where possible.
+7. TURN relays call media when direct peer connectivity is unavailable.
+
+---
+
+## 📁 Project Structure
+
+```text
+Neosis/
+├── .github/
+│   ├── dependabot.yml
+│   └── workflows/
+├── neosis-frontend/
+│   ├── public/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── ConfirmDialog.jsx
+│   │   │   ├── ContactInfoModal.jsx
+│   │   │   ├── Login.jsx
+│   │   │   ├── NeosisChat.jsx
+│   │   │   └── SettingsModal.jsx
+│   │   ├── context/
+│   │   │   └── AuthContext.jsx
+│   │   ├── App.jsx
+│   │   ├── api.js
+│   │   ├── index.css
+│   │   └── main.jsx
+│   ├── Dockerfile
+│   ├── nginx.conf
+│   ├── package.json
+│   └── vite.config.js
+├── neosis-backend/
+│   ├── src/main/java/com/neosis/
+│   │   ├── config/
+│   │   ├── controller/
+│   │   ├── dto/
+│   │   ├── model/
+│   │   └── repository/
+│   ├── src/main/resources/application.yml
+│   ├── Dockerfile
+│   └── pom.xml
+├── neosis-github-wiki/
+├── docker-compose.yml
+├── PRODUCTION_AUDIT.md
+├── VALIDATION_REPORT.md
+├── LICENSE
+└── README.md
+```
+
+---
+
+## ⚡ Quick Start
 
 ### Prerequisites
 
-- Java 17+
-- Maven 3.9+
-- Node.js 20.19–22
-- MongoDB 7+
-- A Google OAuth 2.0 web client
+Install the following tools:
 
-Configure the Google OAuth redirect URI:
+- **Java 17 or newer**
+- **Maven 3.9 or newer**
+- **Node.js 20.19–22.x**
+- **npm**
+- **MongoDB 7.x**, or a MongoDB Atlas database
+- A **Google OAuth 2.0 Web Application** client
 
-```text
-http://localhost:8080/login/oauth2/code/google
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/tagadearpit/Neosis.git
+cd Neosis
 ```
 
-Backend:
+### 2. Configure the backend
 
 ```bash
 cd neosis-backend
 cp .env.example .env
-set -a && source .env && set +a
+```
+
+Edit `neosis-backend/.env`:
+
+```env
+PORT=8080
+MONGO_URI=mongodb://localhost:27017/neosis
+FRONTEND_URL=http://localhost:5173
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+SESSION_COOKIE_SECURE=false
+SESSION_COOKIE_SAME_SITE=lax
+```
+
+Load the variables and start Spring Boot.
+
+#### Linux or macOS
+
+```bash
+set -a
+source .env
+set +a
 mvn spring-boot:run
 ```
 
-Frontend:
+#### Windows PowerShell
+
+```powershell
+$env:PORT="8080"
+$env:MONGO_URI="mongodb://localhost:27017/neosis"
+$env:FRONTEND_URL="http://localhost:5173"
+$env:GOOGLE_CLIENT_ID="your-google-client-id"
+$env:GOOGLE_CLIENT_SECRET="your-google-client-secret"
+$env:SESSION_COOKIE_SECURE="false"
+$env:SESSION_COOKIE_SAME_SITE="lax"
+mvn spring-boot:run
+```
+
+The backend runs at:
+
+```text
+http://localhost:8080
+```
+
+### 3. Configure the frontend
+
+Open another terminal:
 
 ```bash
 cd neosis-frontend
@@ -53,61 +344,533 @@ npm ci
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Frontend environment:
 
-## Docker Compose
+```env
+VITE_BACKEND_URL=http://localhost:8080
+```
 
-Create a root `.env` from `.env.example`, set the Google OAuth credentials, then run:
+Open:
+
+```text
+http://localhost:5173
+```
+
+---
+
+## 🔧 Environment Variables
+
+### Backend variables
+
+| Variable | Required | Example | Description |
+|---|---:|---|---|
+| `PORT` | No | `8080` | HTTP port. Render supplies this automatically. |
+| `MONGO_URI` | Yes | `mongodb://localhost:27017/neosis` | MongoDB connection URI. |
+| `FRONTEND_URL` | Yes | `https://neosis-static-site.onrender.com` | Exact allowed frontend origin, without a trailing slash. |
+| `GOOGLE_CLIENT_ID` | Yes | `...apps.googleusercontent.com` | Google OAuth Web Application client ID. |
+| `GOOGLE_CLIENT_SECRET` | Yes | `secret` | Google OAuth client secret. Never expose this to the frontend. |
+| `SESSION_COOKIE_SECURE` | Yes in production | `true` | Sends the session cookie only over HTTPS. |
+| `SESSION_COOKIE_SAME_SITE` | Yes | `none` | Use `none` when frontend and backend use separate domains. |
+
+### Frontend build variables
+
+| Variable | Required | Example | Description |
+|---|---:|---|---|
+| `VITE_BACKEND_URL` | Yes | `https://neosis-api.onrender.com` | Public backend URL, without a trailing slash. |
+| `VITE_TURN_URL` | Recommended | `turn:turn.example.com:3478` | TURN server address for reliable calls. |
+| `VITE_TURN_USERNAME` | With TURN | `username` | TURN username. |
+| `VITE_TURN_CREDENTIAL` | With TURN | `credential` | TURN credential. Visible in the browser bundle. |
+
+> [!CAUTION]
+> Every variable beginning with `VITE_` is compiled into the public frontend bundle. Never place database passwords, OAuth client secrets, private API keys or administrative credentials in a `VITE_` variable.
+
+---
+
+## 🔑 Google OAuth Setup
+
+Create an OAuth 2.0 **Web Application** in Google Cloud Console.
+
+### Local development
+
+Authorized JavaScript origin:
+
+```text
+http://localhost:5173
+```
+
+Authorized redirect URI:
+
+```text
+http://localhost:8080/login/oauth2/code/google
+```
+
+### Production
+
+Authorized JavaScript origin:
+
+```text
+https://YOUR-FRONTEND-HOST
+```
+
+Authorized redirect URI:
+
+```text
+https://YOUR-BACKEND-HOST/login/oauth2/code/google
+```
+
+The redirect URI must match exactly. A different hostname, path, protocol or trailing slash can cause `redirect_uri_mismatch`.
+
+---
+
+## 🐳 Docker Setup
+
+Create a root `.env` file:
+
+```env
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+```
+
+Build and start the complete stack:
 
 ```bash
 docker compose up --build
 ```
 
-The frontend is served on `http://localhost:5173`, the API on `http://localhost:8080`, and MongoDB is kept in the `neosis_mongo` volume.
+Services:
 
-## Production environment
-
-Required backend variables:
-
-| Variable | Purpose |
+| Service | Address |
 |---|---|
-| `MONGO_URI` | MongoDB connection URI |
-| `FRONTEND_URL` | Exact HTTPS frontend origin |
-| `GOOGLE_CLIENT_ID` | Google OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
-| `SESSION_COOKIE_SECURE` | Must be `true` in production |
-| `SESSION_COOKIE_SAME_SITE` | Use `none` for cross-site frontend/API deployments |
+| Frontend | `http://localhost:5173` |
+| Backend | `http://localhost:8080` |
+| MongoDB | Internal Docker network |
 
-Frontend build variables:
+Stop the stack:
 
-| Variable | Purpose |
-|---|---|
-| `VITE_BACKEND_URL` | Public HTTPS backend URL |
-| `VITE_TURN_URL` | TURN URL for reliable calls |
-| `VITE_TURN_USERNAME` | TURN username |
-| `VITE_TURN_CREDENTIAL` | TURN credential |
-
-Production Google OAuth must include:
-
-```text
-https://YOUR_BACKEND_HOST/login/oauth2/code/google
+```bash
+docker compose down
 ```
 
-## Validation commands
+Remove the local MongoDB volume as well:
+
+```bash
+docker compose down -v
+```
+
+> [!WARNING]
+> The `-v` option permanently removes the Docker Compose database volume.
+
+---
+
+## ☁️ Deployment
+
+Neosis is designed to run as two Render services from the same repository.
+
+### Frontend — Render Static Site
+
+| Setting | Value |
+|---|---|
+| Service type | Static Site |
+| Root directory | `neosis-frontend` |
+| Build command | `npm ci && npm run build` |
+| Publish directory | `dist` |
+| Environment variable | `VITE_BACKEND_URL=https://YOUR-BACKEND.onrender.com` |
+
+Add this SPA rewrite:
+
+| Source | Destination | Action |
+|---|---|---|
+| `/*` | `/index.html` | Rewrite |
+
+### Backend — Render Web Service
+
+| Setting | Value |
+|---|---|
+| Service type | Web Service |
+| Runtime | Docker |
+| Root directory | `neosis-backend` |
+| Dockerfile path | `./Dockerfile` |
+| Health check path | `/actuator/health` |
+| Build command | Leave empty |
+| Start command | Leave empty |
+
+Required production variables:
+
+```env
+MONGO_URI=mongodb+srv://USER:PASSWORD@CLUSTER.mongodb.net/neosis?retryWrites=true&w=majority
+FRONTEND_URL=https://YOUR-FRONTEND.onrender.com
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+SESSION_COOKIE_SECURE=true
+SESSION_COOKIE_SAME_SITE=none
+```
+
+### Recommended deployment order
+
+1. Deploy the backend.
+2. Copy the backend URL.
+3. Add it as `VITE_BACKEND_URL` on the frontend.
+4. Deploy the frontend.
+5. Copy the frontend URL.
+6. Add it as `FRONTEND_URL` on the backend.
+7. Configure the production Google OAuth origin and callback URI.
+8. Redeploy both services.
+
+---
+
+## 🔌 API Overview
+
+All user-scoped endpoints require an authenticated session unless noted otherwise.
+
+### Authentication and security
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/oauth2/authorization/google` | Start Google OAuth login |
+| `GET` | `/login/oauth2/code/google` | Google OAuth callback |
+| `GET` | `/api/csrf` | Obtain the CSRF token |
+| `POST` | `/logout` | End the authenticated session |
+
+### Users and settings
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/users/me` | Read the current profile |
+| `PATCH` | `/api/users/me` | Update display name or status |
+| `PATCH` | `/api/users/me/preferences` | Update application preferences |
+| `DELETE` | `/api/users/me` | Permanently delete the account |
+| `POST` | `/api/users/accept-terms` | Record terms acceptance |
+| `GET` | `/api/users/check` | Check authentication status |
+
+### Contacts
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/contacts/request` | Send a contact request |
+| `GET` | `/api/contacts/pending` | List pending requests |
+| `POST` | `/api/contacts/accept` | Accept a request |
+| `POST` | `/api/contacts/reject` | Reject a request |
+| `GET` | `/api/contacts/friends` | List connected contacts |
+
+### Conversations and messages
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/conversations` | List conversation summaries |
+| `PATCH` | `/api/conversations/{contactEmail}` | Update pin or mute preference |
+| `DELETE` | `/api/conversations/{contactEmail}/messages` | Clear the conversation for the current user |
+| `DELETE` | `/api/conversations/{contactEmail}` | Remove a contact/conversation |
+| `GET` | `/api/messages/history/{friendEmail}` | Load message history |
+| `POST` | `/api/messages/read/{friendEmail}` | Mark messages as read |
+| `POST` | `/api/chat/upload` | Upload authenticated media |
+| `GET` | `/api/chat/media/{id}` | Retrieve authorized media |
+
+### WebSocket destinations
+
+| Destination | Purpose |
+|---|---|
+| `/app/chat.send` | Send a real-time chat message |
+| `/app/chat.typing` | Publish a typing state |
+| `/app/chat.signal` | Exchange WebRTC signaling events |
+
+See [`neosis-github-wiki/API-Reference.md`](neosis-github-wiki/API-Reference.md) for additional details.
+
+---
+
+## 🛡️ Security Model
+
+Neosis includes several baseline production controls:
+
+- OAuth authentication instead of application-managed passwords
+- Server-side sessions persisted in MongoDB
+- HttpOnly session cookies
+- `Secure` and `SameSite` cookie configuration
+- Session-backed CSRF tokens
+- Explicit credentialed CORS origin
+- Request validation
+- Centralized API error responses
+- HTTP and WebSocket rate limiting
+- Authenticated media endpoints
+- Media ownership checks
+- File-size and MIME-type restrictions
+- Non-root Docker containers
+- Health endpoints with restricted details
+- Secure Nginx headers for containerized frontend delivery
+
+### Current security boundary
+
+| Area | Current behavior |
+|---|---|
+| Network transport | HTTPS/WSS in production |
+| Session credential | HttpOnly secure cookie |
+| Stored text messages | Plaintext application data in MongoDB |
+| Stored media | Application-accessible GridFS objects |
+| WebRTC media | DTLS-SRTP transport |
+| End-to-end encryption | Not implemented |
+| Malware scanning | Not implemented |
+
+For public deployment at scale, add content-signature validation, malware scanning, abuse controls, security-event auditing, retention policies, secret rotation and an external penetration test.
+
+Detailed findings are documented in [`PRODUCTION_AUDIT.md`](PRODUCTION_AUDIT.md).
+
+---
+
+## ✅ Validation and Testing
+
+### Frontend
+
+```bash
+cd neosis-frontend
+npm ci
+npm run build
+```
+
+### Backend
+
+```bash
+cd neosis-backend
+mvn clean verify
+```
+
+### Docker
+
+```bash
+docker compose build --no-cache
+docker compose up
+```
+
+### Manual smoke-test checklist
+
+- [ ] Google login succeeds
+- [ ] Session remains valid after a browser refresh
+- [ ] Logout invalidates the session
+- [ ] Profile settings persist
+- [ ] Contact requests can be accepted and rejected
+- [ ] Text messages arrive in real time
+- [ ] Message history reloads correctly
+- [ ] Read receipts and unread counters update
+- [ ] Pin and mute settings persist
+- [ ] Chat clearing remains cleared after reload
+- [ ] Media upload and download permissions are enforced
+- [ ] Audio and video calls work across separate networks
+- [ ] Account deletion removes user-owned data
+- [ ] `/actuator/health` reports a healthy backend
+
+See [`VALIDATION_REPORT.md`](VALIDATION_REPORT.md) for the validation record included with the project.
+
+---
+
+## 📊 Operational Notes
+
+### Health endpoint
+
+```text
+GET /actuator/health
+```
+
+Use this endpoint for Render health checks and container probes.
+
+### Database
+
+- Use MongoDB Atlas or a managed replica set in production.
+- Restrict the database user to the Neosis database.
+- Enable backups and test restoration regularly.
+- Keep `MONGO_URI` only in backend secret storage.
+
+### Calls
+
+Public STUN servers alone are not sufficient for reliable WebRTC connectivity. Configure TURN for users behind mobile carrier NAT, enterprise firewalls or restrictive Wi-Fi networks.
+
+### Scaling limitation
+
+The current embedded STOMP broker and in-memory rate-limit buckets are suitable for a **single backend instance**.
+
+Before horizontal scaling, replace them with shared infrastructure such as:
+
+- RabbitMQ STOMP relay or another external broker
+- Redis-backed/distributed rate limiting
+- Shared presence and call-state management
+- Centralized logs, metrics and traces
+
+### Free hosting behavior
+
+A sleeping or cold-starting backend can delay login, WebSocket connection, presence and incoming-call behavior. Use an always-on backend instance for time-sensitive real-time communication.
+
+---
+
+## 🧯 Troubleshooting
+
+<details>
+<summary><strong>Login remains on “Verifying secure session”</strong></summary>
+
+Check:
+
+1. `VITE_BACKEND_URL` points to the correct HTTPS backend.
+2. `FRONTEND_URL` exactly matches the deployed frontend origin.
+3. `SESSION_COOKIE_SECURE=true` in production.
+4. `SESSION_COOKIE_SAME_SITE=none` for separate Render domains.
+5. Google OAuth redirect URI points to the backend callback.
+6. MongoDB is reachable and the backend health endpoint is healthy.
+7. The browser is not blocking third-party/cross-site cookies.
+
+After changing a Vite variable, rebuild the frontend because `VITE_` values are compile-time variables.
+
+</details>
+
+<details>
+<summary><strong>Google reports redirect_uri_mismatch</strong></summary>
+
+Add the exact callback URI in Google Cloud Console:
+
+```text
+https://YOUR-BACKEND-HOST/login/oauth2/code/google
+```
+
+The callback belongs to the backend, not the frontend.
+
+</details>
+
+<details>
+<summary><strong>Directly opening /login or another route returns 404</strong></summary>
+
+Add the Render Static Site rewrite:
+
+```text
+/*  →  /index.html
+```
+
+Set the action to **Rewrite**, not Redirect.
+
+</details>
+
+<details>
+<summary><strong>Messages do not update in real time</strong></summary>
+
+Check the browser Network tab for the SockJS/WebSocket connection and confirm:
+
+- Backend service is awake and healthy
+- CORS origin matches the frontend
+- Session cookie is present
+- Proxy allows WebSocket upgrades
+- No stale PWA bundle is using an old backend URL
+
+</details>
+
+<details>
+<summary><strong>Audio or video calls work only on some networks</strong></summary>
+
+Configure `VITE_TURN_URL`, `VITE_TURN_USERNAME` and `VITE_TURN_CREDENTIAL`. Direct peer connectivity can fail behind CGNAT and enterprise firewalls.
+
+</details>
+
+<details>
+<summary><strong>The deployed frontend still shows an old version</strong></summary>
+
+The PWA service worker may have cached older assets. Use a hard refresh, clear site data, or trigger a Render **Clear build cache & deploy** operation.
+
+</details>
+
+---
+
+## 🗺️ Roadmap
+
+Potential production improvements:
+
+- [ ] Audited end-to-end encryption protocol
+- [ ] Multi-device key and session management
+- [ ] Group conversations
+- [ ] Message reactions and replies
+- [ ] Edit and delete individual messages
+- [ ] Full-text conversation search
+- [ ] Push notifications
+- [ ] Temporary TURN credentials
+- [ ] Malware scanning for uploads
+- [ ] Object storage/CDN media pipeline
+- [ ] External STOMP broker
+- [ ] Redis-backed distributed rate limiting
+- [ ] OpenTelemetry traces and centralized metrics
+- [ ] Administrative abuse-management controls
+- [ ] Automated end-to-end browser tests
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository.
+2. Create a focused branch:
+
+```bash
+git checkout -b feature/your-change
+```
+
+3. Keep frontend and backend changes backward-compatible where possible.
+4. Add validation and error handling for new API inputs.
+5. Run the production checks:
 
 ```bash
 cd neosis-frontend && npm ci && npm run build
-cd neosis-backend && mvn clean verify
+cd ../neosis-backend && mvn clean verify
 ```
 
-The Docker backend image also runs `mvn clean verify` during its build.
+6. Commit using a clear message:
 
-## Deployment notes
+```bash
+git commit -m "Add concise description of change"
+```
 
-- Use HTTPS for both frontend and backend. `SameSite=None` cookies are rejected by browsers unless `Secure=true`.
-- Configure a TURN service; public STUN alone does not make WebRTC reliable across enterprise/mobile NATs.
-- Use a MongoDB replica set if account deletion must be transactionally atomic.
-- The embedded STOMP broker and in-memory rate-limit buckets are single-instance components. Multi-instance deployment requires a shared broker and distributed rate limiter.
-- Add malware scanning and content-signature validation before enabling public/untrusted file uploads at scale.
+7. Push the branch and open a pull request.
 
-See [`PRODUCTION_AUDIT.md`](PRODUCTION_AUDIT.md) for implemented controls and remaining production risks.
+Pull requests should explain behavior changes, security impact, migration requirements, test coverage and operational risks.
+
+---
+
+## 📚 Additional Documentation
+
+- [Project overview](neosis-github-wiki/Project-Overview.md)
+- [System architecture](neosis-github-wiki/System-Architecture.md)
+- [Frontend guide](neosis-github-wiki/Frontend-Guide.md)
+- [Backend guide](neosis-github-wiki/Backend-Guide.md)
+- [Authentication and security](neosis-github-wiki/Authentication-and-Security.md)
+- [WebSocket and real-time behavior](neosis-github-wiki/WebSocket-and-Realtime.md)
+- [Environment variables](neosis-github-wiki/Environment-Variables.md)
+- [Deployment guide](neosis-github-wiki/Deployment-Guide.md)
+- [Troubleshooting](neosis-github-wiki/Troubleshooting.md)
+- [Production risks and roadmap](neosis-github-wiki/Production-Risks-and-Roadmap.md)
+
+---
+
+## 📄 License
+
+This project is distributed under the **MIT License**. See [`LICENSE`](LICENSE) for the complete license text.
+
+---
+
+## 👨‍💻 Maintainer
+
+**Arpit Tagade**  
+Full-Stack AI Engineer and hardware developer
+
+<p>
+  <a href="https://github.com/tagadearpit">
+    <img src="https://img.shields.io/badge/GitHub-tagadearpit-181717?logo=github&logoColor=white" alt="Arpit Tagade on GitHub" />
+  </a>
+  <a href="https://neosis-static-site.onrender.com">
+    <img src="https://img.shields.io/badge/Live-Neosis-34D399?logo=render&logoColor=white" alt="Open Neosis" />
+  </a>
+</p>
+
+<p align="center">
+  <strong>Built for maintainable real-time communication—not just a UI demo.</strong>
+</p>
+
+<p align="center">
+  <a href="#-overview">⬆ Back to top</a>
+</p>
+
+<p align="center">
+  <img
+    src="https://capsule-render.vercel.app/api?type=waving&color=0:34d399,55:0f766e,100:0f172a&height=120&section=footer"
+    width="100%"
+    alt="Neosis footer"
+  />
+</p>
