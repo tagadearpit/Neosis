@@ -4,11 +4,18 @@ import com.neosis.config.TermsAcceptedFilter;
 import com.neosis.dto.DeleteAccountRequest;
 import com.neosis.dto.UpdateProfileRequest;
 import com.neosis.dto.UpdateUserPreferencesRequest;
+import com.neosis.dto.UpdateUserSettingsRequest;
 import com.neosis.model.User;
+import com.neosis.model.UserSettings;
+import com.neosis.repository.AbuseReportRepository;
+import com.neosis.repository.BlockedUserRepository;
 import com.neosis.repository.ChatMessageRepository;
 import com.neosis.repository.ChatRequestRepository;
 import com.neosis.repository.ConversationPreferenceRepository;
 import com.neosis.repository.UserRepository;
+import com.neosis.repository.UserSettingsRepository;
+import com.neosis.repository.LoginEventRepository;
+import com.neosis.service.UserSettingsService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
@@ -21,6 +28,8 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.core.user.OAuth2User;
+import org.springframework.session.FindByIndexNameSessionRepository;
+import org.springframework.session.Session;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -44,6 +53,12 @@ public class UserController {
     private final ConversationPreferenceRepository preferenceRepository;
     private final GridFsTemplate gridFsTemplate;
     private final SimpMessagingTemplate messagingTemplate;
+    private final UserSettingsService settingsService;
+    private final UserSettingsRepository settingsRepository;
+    private final BlockedUserRepository blockedUserRepository;
+    private final LoginEventRepository loginEventRepository;
+    private final AbuseReportRepository reportRepository;
+    private final FindByIndexNameSessionRepository<? extends Session> sessionRepository;
 
     public UserController(
         UserRepository userRepository,
@@ -51,7 +66,13 @@ public class UserController {
         ChatRequestRepository requestRepository,
         ConversationPreferenceRepository preferenceRepository,
         GridFsTemplate gridFsTemplate,
-        SimpMessagingTemplate messagingTemplate
+        SimpMessagingTemplate messagingTemplate,
+        UserSettingsService settingsService,
+        UserSettingsRepository settingsRepository,
+        BlockedUserRepository blockedUserRepository,
+        LoginEventRepository loginEventRepository,
+        AbuseReportRepository reportRepository,
+        FindByIndexNameSessionRepository<? extends Session> sessionRepository
     ) {
         this.userRepository = userRepository;
         this.messageRepository = messageRepository;
@@ -59,13 +80,28 @@ public class UserController {
         this.preferenceRepository = preferenceRepository;
         this.gridFsTemplate = gridFsTemplate;
         this.messagingTemplate = messagingTemplate;
+        this.settingsService = settingsService;
+        this.settingsRepository = settingsRepository;
+        this.blockedUserRepository = blockedUserRepository;
+        this.loginEventRepository = loginEventRepository;
+        this.reportRepository = reportRepository;
+        this.sessionRepository = sessionRepository;
     }
 
     @GetMapping("/me")
-    public ResponseEntity<?> getCurrentUser(@AuthenticationPrincipal OAuth2User principal) {
+    public ResponseEntity<?> getCurrentUser(
+        @AuthenticationPrincipal OAuth2User principal,
+        HttpServletRequest servletRequest
+    ) {
         User user = resolveUser(principal);
         if (user == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Not authenticated"));
-        return ResponseEntity.ok(toResponse(user));
+        Map<String, Object> response = toResponse(user);
+        HttpSession session = servletRequest.getSession(false);
+        boolean newDeviceLogin = session != null
+            && Boolean.TRUE.equals(session.getAttribute(com.neosis.service.LoginAuditService.NEW_DEVICE_ATTRIBUTE));
+        response.put("newDeviceLogin", newDeviceLogin);
+        if (newDeviceLogin) session.removeAttribute(com.neosis.service.LoginAuditService.NEW_DEVICE_ATTRIBUTE);
+        return ResponseEntity.ok(response);
     }
 
     @PatchMapping("/me")
@@ -101,6 +137,18 @@ public class UserController {
         }
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
+        UpdateUserSettingsRequest.Privacy privacy = new UpdateUserSettingsRequest.Privacy(
+            null, null, null, null, null, request.typingIndicatorsEnabled(), null, null
+        );
+        String sound = request.notificationSoundsEnabled() == null
+            ? null
+            : (request.notificationSoundsEnabled() ? "CHIME" : "NONE");
+        UpdateUserSettingsRequest.Notifications notifications = new UpdateUserSettingsRequest.Notifications(
+            null, null, sound, null, null, null, null, null
+        );
+        settingsService.update(user.getEmail(), new UpdateUserSettingsRequest(
+            privacy, notifications, null, null, null
+        ));
         return ResponseEntity.ok(toResponse(user));
     }
 
@@ -128,6 +176,16 @@ public class UserController {
             Criteria.where("metadata.recipientEmail").is(email)
         )));
         messageRepository.deleteBySenderEmailOrRecipientEmail(email, email);
+        settingsRepository.deleteByOwnerEmail(email);
+        blockedUserRepository.deleteByBlockerEmailOrBlockedEmail(email, email);
+        loginEventRepository.deleteByOwnerEmail(email);
+        var retainedReports = reportRepository.findByReportedEmail(email);
+        retainedReports.forEach(report -> report.setReportedEmail("deleted:" + user.getId()));
+        reportRepository.saveAll(retainedReports);
+        reportRepository.deleteByReporterEmail(email);
+        for (Session activeSession : sessionRepository.findByPrincipalName(email).values()) {
+            sessionRepository.deleteById(activeSession.getId());
+        }
         userRepository.delete(user);
 
         HttpSession session = servletRequest.getSession(false);
@@ -150,6 +208,19 @@ public class UserController {
         userRepository.save(user);
         servletRequest.getSession(true).setAttribute(TermsAcceptedFilter.SESSION_ATTRIBUTE, true);
         return ResponseEntity.ok(Map.of("termsAccepted", true));
+    }
+
+    @PostMapping("/presence")
+    public ResponseEntity<?> updatePresence(@AuthenticationPrincipal OAuth2User principal) {
+        User user = resolveUser(principal);
+        if (user == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Not authenticated"));
+        LocalDateTime now = LocalDateTime.now();
+        if (user.getLastSeenAt() == null || user.getLastSeenAt().isBefore(now.minusSeconds(45))) {
+            user.setLastSeenAt(now);
+            user.setUpdatedAt(now);
+            userRepository.save(user);
+        }
+        return ResponseEntity.noContent().build();
     }
 
     private void notifyAcceptedContacts(String email, String type) {
@@ -183,15 +254,24 @@ public class UserController {
     }
 
     private Map<String, Object> toResponse(User user) {
+        UserSettings settings = settingsService.getOrCreate(user.getEmail());
         Map<String, Object> userData = new HashMap<>();
         userData.put("email", user.getEmail());
         userData.put("name", user.getName());
         userData.put("statusMessage", user.getStatusMessage());
-        userData.put("notificationSoundsEnabled", user.isNotificationSoundsEnabled());
-        userData.put("typingIndicatorsEnabled", user.isTypingIndicatorsEnabled());
+        userData.put("notificationSoundsEnabled", !"NONE".equals(settings.getNotifications().sound()));
+        userData.put("typingIndicatorsEnabled", settings.getPrivacy().typingIndicators());
+        userData.put("settings", settingsService.toResponse(settings));
+        userData.put("authenticationProvider", "GOOGLE");
+        userData.put("emailVerified", true);
+        userData.put("passwordManagedByProvider", true);
+        userData.put("twoFactorManagedByProvider", true);
+        userData.put("passkeysManagedByProvider", true);
         userData.put("termsAccepted", user.isTermsAccepted());
         userData.put("termsAcceptedAt", user.getTermsAcceptedAt());
         userData.put("createdAt", user.getCreatedAt());
+        userData.put("lastLoginAt", user.getLastLoginAt());
+        userData.put("lastSeenAt", user.getLastSeenAt());
         return userData;
     }
 

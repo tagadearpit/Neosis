@@ -2,6 +2,7 @@ package com.neosis.config;
 
 import com.neosis.model.User;
 import com.neosis.repository.UserRepository;
+import com.neosis.service.LoginAuditService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -43,6 +44,7 @@ public class SecurityConfig {
     private final UserRepository userRepository;
     private final RateLimitFilter rateLimitFilter;
     private final TermsAcceptedFilter termsAcceptedFilter;
+    private final LoginAuditService loginAuditService;
 
     @Value("${app.frontend.url:https://neosis-static-site.onrender.com}")
     private String frontendUrl;
@@ -53,11 +55,13 @@ public class SecurityConfig {
     public SecurityConfig(
         UserRepository userRepository,
         RateLimitFilter rateLimitFilter,
-        TermsAcceptedFilter termsAcceptedFilter
+        TermsAcceptedFilter termsAcceptedFilter,
+        LoginAuditService loginAuditService
     ) {
         this.userRepository = userRepository;
         this.rateLimitFilter = rateLimitFilter;
         this.termsAcceptedFilter = termsAcceptedFilter;
+        this.loginAuditService = loginAuditService;
     }
 
     @Bean
@@ -149,8 +153,11 @@ public class SecurityConfig {
                     } else if (!user.isNameCustomized() && googleName != null && !googleName.equals(user.getName())) {
                         user.setName(googleName);
                         user.setUpdatedAt(LocalDateTime.now());
-                        userRepository.save(user);
                     }
+                    user.setLastLoginAt(LocalDateTime.now());
+                    user.setLastSeenAt(LocalDateTime.now());
+                    user.setUpdatedAt(LocalDateTime.now());
+                    userRepository.save(user);
 
                     // User destinations depend on Principal#getName(). Keep it equal to the normalized email.
                     OAuth2AuthenticationToken oauthToken = (OAuth2AuthenticationToken) authentication;
@@ -177,6 +184,7 @@ public class SecurityConfig {
                         context
                     );
                     session.setAttribute(TermsAcceptedFilter.SESSION_ATTRIBUTE, user.isTermsAccepted());
+                    loginAuditService.recordSuccessfulLogin(email, request, session);
 
                     response.sendRedirect(cleanUrl(frontendUrl) + "/chat");
                 })

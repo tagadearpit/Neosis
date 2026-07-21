@@ -34,6 +34,19 @@ class RateLimitFilterTest {
         assertEquals(429, execute(filter, "DELETE", "/api/conversations/another-contact").getStatus());
     }
 
+    @Test
+    void tightlyLimitsPersonalDataExports() throws Exception {
+        RateLimitFilter filter = new RateLimitFilter();
+
+        for (int requestNumber = 0; requestNumber < 5; requestNumber++) {
+            assertEquals(200, execute(filter, "GET", "/api/data/export").getStatus());
+        }
+
+        MockHttpServletResponse rejected = execute(filter, "GET", "/api/data/export");
+        assertEquals(429, rejected.getStatus());
+        assertEquals("5", rejected.getHeader("RateLimit-Limit"));
+    }
+
     private MockHttpServletResponse execute(RateLimitFilter filter, String method, String path) throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest(method, path);
         request.setRemoteAddr("203.0.113.10");

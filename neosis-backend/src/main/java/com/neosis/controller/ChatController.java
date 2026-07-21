@@ -4,8 +4,11 @@ import com.mongodb.client.gridfs.model.GridFSFile;
 import com.neosis.model.ChatMessage;
 import com.neosis.repository.ChatMessageRepository;
 import com.neosis.repository.ChatRequestRepository;
+import com.neosis.repository.ConversationPreferenceRepository;
 import com.neosis.repository.UserRepository;
 import com.neosis.security.FileSignatureValidator;
+import com.neosis.service.BlockService;
+import com.neosis.service.UserSettingsService;
 
 import org.bson.Document;
 import org.springframework.core.io.InputStreamResource;
@@ -69,19 +72,28 @@ public class ChatController {
     private final ChatRequestRepository requestRepository;
     private final UserRepository userRepository;
     private final GridFsTemplate gridFsTemplate;
+    private final ConversationPreferenceRepository preferenceRepository;
+    private final BlockService blockService;
+    private final UserSettingsService settingsService;
 
     public ChatController(
         SimpMessagingTemplate messagingTemplate,
         ChatMessageRepository chatMessageRepository,
         ChatRequestRepository requestRepository,
         UserRepository userRepository,
-        GridFsTemplate gridFsTemplate
+        GridFsTemplate gridFsTemplate,
+        ConversationPreferenceRepository preferenceRepository,
+        BlockService blockService,
+        UserSettingsService settingsService
     ) {
         this.messagingTemplate = messagingTemplate;
         this.chatMessageRepository = chatMessageRepository;
         this.requestRepository = requestRepository;
         this.userRepository = userRepository;
         this.gridFsTemplate = gridFsTemplate;
+        this.preferenceRepository = preferenceRepository;
+        this.blockService = blockService;
+        this.settingsService = settingsService;
     }
 
     @PostMapping("/api/chat/upload")
@@ -96,6 +108,9 @@ public class ChatController {
         if (senderEmail == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Unauthorized"));
         if (recipient == null) return ResponseEntity.badRequest().body(Map.of("error", "Invalid recipient"));
         if (!areAcceptedContacts(senderEmail, recipient)) return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "You can only upload files for accepted contacts"));
+        if ("NOBODY".equals(settingsService.messagesVisibility(recipient))) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "This contact is not accepting messages"));
+        }
         if (file == null || file.isEmpty()) return ResponseEntity.badRequest().body(Map.of("error", "File is empty"));
         if (file.getSize() > MAX_UPLOAD_BYTES) return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(Map.of("error", "Maximum file size is 15MB"));
 
@@ -188,6 +203,7 @@ public class ChatController {
         String recipientEmail = normalizeEmail(chatMessage.getRecipientEmail());
         if (recipientEmail == null) return;
         if (!areAcceptedContacts(trueEmail, recipientEmail)) return;
+        if ("NOBODY".equals(settingsService.messagesVisibility(recipientEmail))) return;
 
         String type = normalizeMessageType(chatMessage.getMessageType());
         String content = chatMessage.getContent() == null ? "" : chatMessage.getContent().trim();
@@ -202,6 +218,12 @@ public class ChatController {
         LocalDateTime now = LocalDateTime.now();
         chatMessage.setCreatedAt(now);
         chatMessage.setTimestamp(Instant.now().toString());
+        if ("TEXT".equals(type)) {
+            preferenceRepository.findByOwnerEmailAndContactEmail(trueEmail, recipientEmail)
+                .map(preference -> preference.getDisappearingMessagesSeconds())
+                .filter(seconds -> seconds > 0)
+                .ifPresent(seconds -> chatMessage.setExpiresAt(now.plusSeconds(seconds)));
+        }
 
         if (!"TEXT".equals(type)) {
             GridFSFile media = findMediaByPublicId(extractMediaId(chatMessage.getMediaData()));
@@ -229,11 +251,11 @@ public class ChatController {
         String senderEmail = principalEmail(principal);
         if (senderEmail == null || payload == null) return;
 
-        var sender = userRepository.findByEmail(senderEmail);
-        if (sender == null || !sender.isTypingIndicatorsEnabled()) return;
+        if (!settingsService.typingIndicatorsEnabled(senderEmail)) return;
 
         String recipientEmail = normalizeEmail(payload.get("recipientEmail"));
         if (recipientEmail == null || !areAcceptedContacts(senderEmail, recipientEmail)) return;
+        if ("NOBODY".equals(settingsService.messagesVisibility(recipientEmail))) return;
 
         Map<String, String> safePayload = Map.of(
             "senderEmail", senderEmail,
@@ -252,6 +274,7 @@ public class ChatController {
         String recipientEmail = normalizeEmail(recipientValue == null ? null : recipientValue.toString());
         String type = payload.get("type") == null ? null : payload.get("type").toString();
         if (recipientEmail == null || !areAcceptedContacts(senderEmail, recipientEmail)) return;
+        if ("NOBODY".equals(settingsService.messagesVisibility(recipientEmail))) return;
         if (!Set.of("offer", "answer", "ice-candidate", "end-call", "call-rejected").contains(type)) return;
 
         Map<String, Object> safePayload = new HashMap<>();
@@ -275,6 +298,7 @@ public class ChatController {
 
     private boolean areAcceptedContacts(String user1, String user2) {
         if (user1 == null || user2 == null || user1.equalsIgnoreCase(user2)) return false;
+        if (blockService.isEitherBlocked(user1, user2)) return false;
         return requestRepository.existsByPairKeyAndStatus(
             com.neosis.model.ChatRequest.buildPairKey(user1, user2),
             "ACCEPTED"

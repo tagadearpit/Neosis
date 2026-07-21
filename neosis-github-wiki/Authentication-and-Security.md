@@ -20,6 +20,11 @@ Frontend login button
 
 The backend uses a server-side session. The frontend sends cookies by setting Axios `withCredentials: true`.
 
+Users can list and revoke individual sessions or revoke every other session. API responses
+contain only a short SHA-256 session fingerprint, never the raw cookie/session identifier.
+Successful logins record a coarse device/browser label and masked IP address for suspicious
+activity review. Login events expire after 180 days.
+
 Production cookie settings:
 
 ```yaml
@@ -92,8 +97,31 @@ have tighter limits, while every API route receives a general per-user or per-IP
 |---|---|---:|
 | POST | `/api/chat/upload` | 20 |
 | POST | `/api/contacts/request` | 30 |
+| POST | `/api/safety/reports` | 10 |
+| GET | `/api/data/export` | 5 |
+| DELETE | `/api/security/sessions*` | 30 |
 The limiter uses the authenticated identity when available and remote IP before login.
 Its in-memory bucket map is capped and periodically removes expired entries.
+
+## Account security ownership
+
+Neosis authenticates exclusively through Google OAuth and does not store passwords.
+Password changes, Google two-step verification and Google passkeys therefore remain in
+Google Account security. The Neosis settings screen links to those provider controls and
+manages only Neosis-owned sessions, privacy preferences, login history and account data.
+
+## Privacy and safety enforcement
+
+- Bidirectional block checks cover contact requests, conversations, messages, uploads,
+  typing indicators and WebRTC signaling.
+- Read receipts and typing indicators are enforced by the backend, not just hidden in UI.
+- Presence and about fields are filtered from conversation summaries according to the
+  contact's visibility settings.
+- Disappearing text messages use a server timestamp plus a MongoDB TTL index. History
+  queries also exclude expired records before background TTL cleanup occurs. Attachments
+  are excluded until coordinated GridFS cleanup is implemented.
+- Structured abuse reports preserve relevant message IDs and timestamps while limiting
+  free-text details.
 
 ## Current security limitations
 
@@ -128,6 +156,6 @@ Spring's simple broker is suitable for a single backend instance. For horizontal
 - Tighten CSP.
 - Add virus/malware scanning for uploads.
 - Store files in object storage for larger scale.
-- Add audit logs for login, contact requests, uploads, and calls.
+- Extend security-event auditing beyond logins to contact requests, uploads, and calls.
 - Add automated tests for auth, contact access, media access, and WebSocket message validation.
 - Add client-side encryption before making E2EE claims.

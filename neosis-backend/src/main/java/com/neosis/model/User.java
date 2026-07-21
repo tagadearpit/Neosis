@@ -23,6 +23,8 @@ public class User {
     private Boolean typingIndicatorsEnabled;
     private boolean termsAccepted;
     private LocalDateTime termsAcceptedAt;
+    private LocalDateTime lastLoginAt;
+    private LocalDateTime lastSeenAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -68,6 +70,12 @@ public class User {
 
     public LocalDateTime getTermsAcceptedAt() { return termsAcceptedAt; }
     public void setTermsAcceptedAt(LocalDateTime termsAcceptedAt) { this.termsAcceptedAt = termsAcceptedAt; }
+
+    public LocalDateTime getLastLoginAt() { return lastLoginAt; }
+    public void setLastLoginAt(LocalDateTime lastLoginAt) { this.lastLoginAt = lastLoginAt; }
+
+    public LocalDateTime getLastSeenAt() { return lastSeenAt; }
+    public void setLastSeenAt(LocalDateTime lastSeenAt) { this.lastSeenAt = lastSeenAt; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

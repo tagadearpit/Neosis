@@ -128,13 +128,32 @@ Neosis is structured as two independently deployable services:
 - Google OAuth 2.0 login
 - Persistent MongoDB-backed sessions
 - Secure HttpOnly session cookies
+- Active-session inventory and per-device revocation
+- Masked login history with 180-day retention
+- New-device login alerts
 - User profile editing
 - Display-name and status updates
-- Notification-sound preference
-- Typing-indicator preference
+- Versioned privacy, notification, appearance and media settings
+- Block and unblock controls with server-side enforcement
+- Downloadable account-data and per-chat exports
 - Secure logout
 - Permanent account deletion
 - User-scoped cleanup of messages, media, contacts, preferences and sessions
+
+Password changes, two-factor authentication and passkeys are managed by Google because
+Neosis does not store application passwords. The settings UI links users to the correct
+Google Account security controls instead of duplicating credential management.
+
+### ⚙️ Privacy and conversation settings
+
+- Light, dark and system themes, accent color, font size and compact density
+- Last-seen, online, profile, about, read-receipt and typing visibility controls
+- Message and group-invite audience preferences
+- High Privacy Mode with privacy-preserving defaults
+- Desktop notification, preview and quiet-hours controls
+- Media auto-load and link-preview controls
+- Timed chat muting and disappearing text messages
+- Chat search, export, clear, block and report actions
 
 ### 📱 User experience
 
@@ -553,6 +572,13 @@ All user-scoped endpoints require an authenticated session unless noted otherwis
 | `PATCH` | `/api/users/me/preferences` | Update application preferences |
 | `DELETE` | `/api/users/me` | Permanently delete the account |
 | `POST` | `/api/users/accept-terms` | Record terms acceptance |
+| `POST` | `/api/users/presence` | Refresh the current user's presence |
+| `GET` | `/api/settings` | Read versioned account settings |
+| `PATCH` | `/api/settings` | Update privacy, notification, appearance, media or security settings |
+| `GET` | `/api/security/sessions` | List active login sessions |
+| `DELETE` | `/api/security/sessions/{id}` | Revoke one active session |
+| `DELETE` | `/api/security/sessions` | Revoke all other sessions |
+| `GET` | `/api/security/login-history` | Read recent masked login events |
 
 ### Contacts
 
@@ -573,8 +599,20 @@ All user-scoped endpoints require an authenticated session unless noted otherwis
 | `DELETE` | `/api/conversations/{contactEmail}` | Remove a contact/conversation |
 | `GET` | `/api/messages/history/{friendEmail}` | Load message history |
 | `POST` | `/api/messages/read/{friendEmail}` | Mark messages as read |
+| `GET` | `/api/messages/export/{friendEmail}` | Download a bounded text chat export |
 | `POST` | `/api/chat/upload` | Upload authenticated media |
 | `GET` | `/api/chat/media/{id}` | Retrieve authorized media |
+
+### Safety and data
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/safety/blocked` | List blocked users |
+| `POST` | `/api/safety/blocked/{email}` | Block a user |
+| `DELETE` | `/api/safety/blocked/{email}` | Unblock a user |
+| `POST` | `/api/safety/reports` | Submit a structured abuse report |
+| `GET` | `/api/data/export` | Download the current user's account data |
+| `DELETE` | `/api/data/chats` | Clear all chats for the current user |
 
 ### WebSocket destinations
 
@@ -595,6 +633,7 @@ Neosis includes several baseline production controls:
 - OAuth authentication instead of application-managed passwords
 - Verified Google email requirement
 - Server-side sessions persisted in MongoDB
+- Per-session revocation and masked security-event history
 - HttpOnly session cookies
 - `Secure` and `SameSite` cookie configuration
 - Session-backed CSRF tokens
@@ -606,6 +645,9 @@ Neosis includes several baseline production controls:
 - Allowlisted WebSocket subscriptions and application destinations
 - Authenticated media endpoints
 - Media ownership checks
+- Bidirectional block enforcement across contacts, messages, media and calls
+- Privacy-setting enforcement for receipts, typing, presence and messaging
+- TTL cleanup for disappearing messages and login-history retention
 - File-size, content-type, and file-signature restrictions
 - Non-root Docker containers
 - Health endpoints with restricted details

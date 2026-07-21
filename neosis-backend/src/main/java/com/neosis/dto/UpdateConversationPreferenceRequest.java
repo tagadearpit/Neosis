@@ -2,5 +2,7 @@ package com.neosis.dto;
 
 public record UpdateConversationPreferenceRequest(
     Boolean pinned,
-    Boolean muted
+    Boolean muted,
+    String muteDuration,
+    Integer disappearingMessagesSeconds
 ) {}

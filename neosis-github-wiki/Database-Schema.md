@@ -16,6 +16,8 @@ Model: `User`
 | `termsAccepted` | boolean | Whether terms were accepted. |
 | `termsAcceptedAt` | datetime | Terms acceptance timestamp. |
 | `createdAt` | datetime | First creation timestamp. |
+| `lastLoginAt` | datetime | Most recent successful Google OAuth login. |
+| `lastSeenAt` | datetime | Last bounded presence heartbeat. |
 
 Index:
 
@@ -62,6 +64,8 @@ Model: `ChatMessage`
 | `mediaContentType` | string | Sanitized content type. |
 | `mediaSize` | number | File length in bytes. |
 | `createdAt` | datetime | Server-side creation timestamp. |
+| `readAt` | datetime | Server-side read timestamp. |
+| `expiresAt` | datetime | Optional disappearing-text-message expiry and TTL key. |
 | `localId` | string | Transient client identifier, not persisted. |
 
 Indexes:
@@ -74,6 +78,23 @@ Indexes:
 ```
 
 Note: The history query uses `$or` for both sender/recipient directions. For very large message collections, consider an explicit `conversationId` field to improve query/index efficiency.
+
+## Settings and safety collections
+
+| Collection | Model | Purpose |
+|---|---|---|
+| `user_settings` | `UserSettings` | Versioned privacy, notification, appearance, media and security groups. |
+| `conversation_preferences` | `ConversationPreference` | Per-user pin, mute, clear and disappearing-message choices. |
+| `blocked_users` | `BlockedUser` | Unique blocker/blocked pairs used by server authorization checks. |
+| `login_events` | `LoginEvent` | Masked login history with 180-day TTL retention. |
+| `abuse_reports` | `AbuseReport` | Structured report category, status and optional message evidence metadata. |
+
+Important indexes:
+
+- Unique `user_settings.ownerEmail`.
+- Unique compound `blocked_users(blockerEmail, blockedEmail)`.
+- `login_events(ownerEmail, createdAt desc)` plus TTL on `expiresAt`.
+- `messages.expiresAt` TTL for disappearing messages.
 
 ## GridFS collections
 
@@ -93,4 +114,4 @@ Relevant metadata is attached to files in `fs.files.metadata`.
 - Add message edit/delete state if required.
 - Add indexes for user search and pending request retrieval.
 - Add TTL cleanup for unused media uploads.
-- Add audit collection for security-sensitive events.
+- Extend login auditing to additional security-sensitive events.
