@@ -30,8 +30,8 @@ Application-level limit:
 Spring multipart configuration:
 
 ```yaml
-max-file-size: 20MB
-max-request-size: 25MB
+max-file-size: 15MB
+max-request-size: 16MB
 ```
 
 The 15 MB application limit is stricter and should be treated as the real user-facing limit.
@@ -40,9 +40,9 @@ The 15 MB application limit is stricter and should be treated as the real user-f
 
 Allowed by category:
 
-- `image/*`
-- `video/*`
-- `audio/*`
+- JPEG, PNG, WebP, and GIF images
+- MP4, WebM, and QuickTime video
+- MPEG, MP4, WebM, Ogg, and WAV audio
 
 Allowed documents:
 
@@ -96,6 +96,9 @@ Access control:
 
 The backend sanitizes file names by removing control characters and path separators. Long names are truncated to the last 160 characters.
 
+The backend also checks the leading bytes for each allowed image, media, PDF, Office,
+or text type. A browser-provided content type alone is not sufficient for acceptance.
+
 ## Production improvements
 
 For a production-grade messaging system, add:
@@ -104,5 +107,4 @@ For a production-grade messaging system, add:
 - Object storage such as S3, Cloudflare R2, or GCS for large-scale media.
 - Signed URLs or short-lived access tokens for media delivery.
 - Background cleanup for abandoned uploaded files that were never sent in a message.
-- Stronger MIME validation using file signatures, not only browser-provided content type.
 - Upload quota per user and per conversation.

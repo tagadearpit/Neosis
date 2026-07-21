@@ -3,6 +3,7 @@ package com.neosis.config;
 import com.neosis.model.User;
 import com.neosis.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -16,7 +17,9 @@ import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
+import org.springframework.security.web.authentication.logout.LogoutFilter;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfException;
@@ -27,36 +30,47 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.time.LocalDateTime;
-import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Stream;
 
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
     private final UserRepository userRepository;
+    private final RateLimitFilter rateLimitFilter;
+    private final TermsAcceptedFilter termsAcceptedFilter;
 
     @Value("${app.frontend.url:https://neosis-static-site.onrender.com}")
     private String frontendUrl;
 
-    public SecurityConfig(UserRepository userRepository) {
+    @Value("${app.cors.allowed-origins}")
+    private String allowedOrigins;
+
+    public SecurityConfig(
+        UserRepository userRepository,
+        RateLimitFilter rateLimitFilter,
+        TermsAcceptedFilter termsAcceptedFilter
+    ) {
         this.userRepository = userRepository;
+        this.rateLimitFilter = rateLimitFilter;
+        this.termsAcceptedFilter = termsAcceptedFilter;
     }
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        String cleanFrontendUrl = frontendUrl.endsWith("/")
-            ? frontendUrl.substring(0, frontendUrl.length() - 1)
-            : frontendUrl;
-
-        config.setAllowedOrigins(Arrays.asList("http://localhost:5173", cleanFrontendUrl));
-        config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(Arrays.asList(
+        config.setAllowedOrigins(parseAllowedOrigins());
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        config.setAllowedHeaders(List.of(
             "Authorization", "Cache-Control", "Content-Type", "X-XSRF-TOKEN", "X-CSRF-TOKEN",
             "Accept", "Origin", "X-Requested-With"
+        ));
+        config.setExposedHeaders(List.of(
+            RequestIdFilter.HEADER, "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset", "Retry-After"
         ));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
@@ -100,6 +114,8 @@ public class SecurityConfig {
             .sessionManagement(session -> session
                 .sessionFixation(fixation -> fixation.changeSessionId())
             )
+            .addFilterAfter(rateLimitFilter, LogoutFilter.class)
+            .addFilterAfter(termsAcceptedFilter, AuthorizationFilter.class)
             .logout(logout -> logout
                 .logoutUrl("/logout")
                 .invalidateHttpSession(true)
@@ -117,8 +133,12 @@ public class SecurityConfig {
                         response.sendError(HttpStatus.BAD_REQUEST.value(), "Google account did not provide an email address");
                         return;
                     }
+                    if (!hasVerifiedEmail(oauthUser)) {
+                        response.sendError(HttpStatus.BAD_REQUEST.value(), "Google account email must be verified");
+                        return;
+                    }
 
-                    User user = userRepository.findByEmailIgnoreCase(email);
+                    User user = userRepository.findByEmail(email);
                     if (user == null) {
                         user = new User();
                         user.setEmail(email);
@@ -151,12 +171,14 @@ public class SecurityConfig {
                     SecurityContext context = SecurityContextHolder.createEmptyContext();
                     context.setAuthentication(emailAuthentication);
                     SecurityContextHolder.setContext(context);
-                    request.getSession(true).setAttribute(
+                    var session = request.getSession(true);
+                    session.setAttribute(
                         HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY,
                         context
                     );
+                    session.setAttribute(TermsAcceptedFilter.SESSION_ATTRIBUTE, user.isTermsAccepted());
 
-                    response.sendRedirect(frontendUrl + "/chat");
+                    response.sendRedirect(cleanUrl(frontendUrl) + "/chat");
                 })
             );
 
@@ -165,5 +187,44 @@ public class SecurityConfig {
 
     private String normalizeEmail(String email) {
         return email == null ? null : email.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private List<String> parseAllowedOrigins() {
+        List<String> origins = Stream.of(allowedOrigins.split(","))
+            .map(String::trim)
+            .filter(origin -> !origin.isBlank())
+            .map(this::cleanUrl)
+            .distinct()
+            .toList();
+        if (origins.isEmpty()) {
+            throw new IllegalStateException("At least one CORS origin must be configured");
+        }
+        return origins;
+    }
+
+    private String cleanUrl(String url) {
+        String cleaned = url == null ? "" : url.trim();
+        while (cleaned.endsWith("/")) cleaned = cleaned.substring(0, cleaned.length() - 1);
+        return cleaned;
+    }
+
+    private boolean hasVerifiedEmail(OAuth2User oauthUser) {
+        Object verified = oauthUser.getAttribute("email_verified");
+        if (verified == null) verified = oauthUser.getAttribute("verified_email");
+        return Boolean.TRUE.equals(verified) || "true".equalsIgnoreCase(String.valueOf(verified));
+    }
+
+    @Bean
+    FilterRegistrationBean<RateLimitFilter> disableContainerRateLimitRegistration(RateLimitFilter filter) {
+        FilterRegistrationBean<RateLimitFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    @Bean
+    FilterRegistrationBean<TermsAcceptedFilter> disableContainerTermsRegistration(TermsAcceptedFilter filter) {
+        FilterRegistrationBean<TermsAcceptedFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
     }
 }

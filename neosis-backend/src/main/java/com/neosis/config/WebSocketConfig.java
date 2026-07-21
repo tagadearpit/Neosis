@@ -9,6 +9,9 @@ import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 import org.springframework.web.socket.config.annotation.WebSocketTransportRegistration;
 
+import java.util.List;
+import java.util.stream.Stream;
+
 @Configuration
 @EnableWebSocketMessageBroker
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
@@ -19,8 +22,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         this.rateLimitInterceptor = rateLimitInterceptor;
     }
 
-    @Value("${app.frontend.url:https://neosis-static-site.onrender.com}")
-    private String frontendUrl;
+    @Value("${app.cors.allowed-origins}")
+    private String allowedOrigins;
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry config) {
@@ -31,12 +34,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        String cleanFrontendUrl = frontendUrl.endsWith("/")
-            ? frontendUrl.substring(0, frontendUrl.length() - 1)
-            : frontendUrl;
-
         registry.addEndpoint("/ws")
-                .setAllowedOrigins("http://localhost:5173", cleanFrontendUrl)
+                .setAllowedOrigins(parseAllowedOrigins().toArray(String[]::new))
                 .withSockJS();
     }
 
@@ -50,5 +49,22 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         registration.setMessageSizeLimit(128 * 1024);
         registration.setSendBufferSizeLimit(512 * 1024);
         registration.setSendTimeLimit(20_000);
+    }
+
+    private List<String> parseAllowedOrigins() {
+        List<String> origins = Stream.of(allowedOrigins.split(","))
+            .map(String::trim)
+            .filter(origin -> !origin.isBlank())
+            .map(this::cleanUrl)
+            .distinct()
+            .toList();
+        if (origins.isEmpty()) throw new IllegalStateException("At least one WebSocket origin must be configured");
+        return origins;
+    }
+
+    private String cleanUrl(String url) {
+        String cleaned = url;
+        while (cleaned.endsWith("/")) cleaned = cleaned.substring(0, cleaned.length() - 1);
+        return cleaned;
     }
 }

@@ -10,6 +10,10 @@ Defined or consumed through `application.yml` and Spring Security OAuth2 configu
 | `GOOGLE_CLIENT_ID` | Yes | `123.apps.googleusercontent.com` | Google OAuth2 client ID. |
 | `GOOGLE_CLIENT_SECRET` | Yes | `GOCSPX-...` | Google OAuth2 client secret. |
 | `FRONTEND_URL` | Yes in production | `https://neosis-static-site.onrender.com` | Allowed frontend origin and OAuth success redirect target. |
+| `ALLOWED_ORIGINS` | Yes in production | `https://neosis-static-site.onrender.com` | Comma-separated CORS and WebSocket origin allowlist. |
+| `SESSION_TIMEOUT` | No | `24h` | Server-side session and cookie lifetime. |
+| `SESSION_COOKIE_SECURE` | Yes in production | `true` | Restricts the session cookie to HTTPS. |
+| `SESSION_COOKIE_SAME_SITE` | Yes | `none` | Allows the cookie across separate frontend/backend origins. |
 | `PORT` | Platform-dependent | `8080` | Runtime port. Spring config defaults to `8080`. |
 
 ## Frontend variables
@@ -26,10 +30,8 @@ https://neosis-433w.onrender.com
 
 ## Cookie and CORS relationship
 
-The backend allows credentials and restricts origins to:
-
-- `http://localhost:5173`
-- the configured `FRONTEND_URL`
+The backend allows credentials and restricts origins to the exact, comma-separated
+values in `ALLOWED_ORIGINS`. If it is omitted, the value falls back to `FRONTEND_URL`.
 
 For production cross-origin cookies to work:
 

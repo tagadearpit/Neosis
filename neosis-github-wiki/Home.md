@@ -56,7 +56,7 @@ Neosis-main/
 |---|---|
 | Frontend | React 18, Vite, Tailwind CSS, Framer Motion |
 | Realtime client | STOMP.js, SockJS |
-| Backend | Spring Boot 3.2.4, Java 17 |
+| Backend | Spring Boot 3.5, Java 17 |
 | Security | Spring Security, Google OAuth2, CSRF cookie token, CORS allowlist |
 | Database | MongoDB |
 | File storage | MongoDB GridFS |

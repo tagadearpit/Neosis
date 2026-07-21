@@ -17,6 +17,8 @@ services:
       PORT: 8080
       MONGO_URI: mongodb://mongo:27017/neosis
       FRONTEND_URL: http://localhost:5173
+      ALLOWED_ORIGINS: http://localhost:5173
+      SESSION_TIMEOUT: 24h
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?Set GOOGLE_CLIENT_ID in .env}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?Set GOOGLE_CLIENT_SECRET in .env}
       SESSION_COOKIE_SECURE: "false"

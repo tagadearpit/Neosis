@@ -10,7 +10,6 @@ import java.util.List;
 @Repository
 public interface UserRepository extends MongoRepository<User, String> {
     User findByEmail(String email);
-    User findByEmailIgnoreCase(String email);
-    boolean existsByEmailIgnoreCase(String email);
+    boolean existsByEmail(String email);
     List<User> findByEmailIn(Collection<String> emails);
 }

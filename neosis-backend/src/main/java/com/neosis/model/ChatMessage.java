@@ -12,7 +12,8 @@ import java.util.Locale;
 
 @Document(collection = "messages")
 @CompoundIndexes({
-    @CompoundIndex(name = "conversation_created_idx", def = "{ 'senderEmail': 1, 'recipientEmail': 1, 'createdAt': -1 }")
+    @CompoundIndex(name = "conversation_created_idx", def = "{ 'senderEmail': 1, 'recipientEmail': 1, 'createdAt': -1 }"),
+    @CompoundIndex(name = "unread_recipient_sender_idx", def = "{ 'recipientEmail': 1, 'readAt': 1, 'senderEmail': 1 }")
 })
 public class ChatMessage {
 

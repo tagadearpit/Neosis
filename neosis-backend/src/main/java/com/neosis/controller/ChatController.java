@@ -5,6 +5,7 @@ import com.neosis.model.ChatMessage;
 import com.neosis.repository.ChatMessageRepository;
 import com.neosis.repository.ChatRequestRepository;
 import com.neosis.repository.UserRepository;
+import com.neosis.security.FileSignatureValidator;
 
 import org.bson.Document;
 import org.springframework.core.io.InputStreamResource;
@@ -93,7 +94,7 @@ public class ChatController {
         String recipient = normalizeEmail(recipientEmail);
 
         if (senderEmail == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Unauthorized"));
-        if (recipient == null || !userRepository.existsByEmailIgnoreCase(recipient)) return ResponseEntity.badRequest().body(Map.of("error", "Recipient does not exist"));
+        if (recipient == null) return ResponseEntity.badRequest().body(Map.of("error", "Invalid recipient"));
         if (!areAcceptedContacts(senderEmail, recipient)) return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "You can only upload files for accepted contacts"));
         if (file == null || file.isEmpty()) return ResponseEntity.badRequest().body(Map.of("error", "File is empty"));
         if (file.getSize() > MAX_UPLOAD_BYTES) return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(Map.of("error", "Maximum file size is 15MB"));
@@ -101,6 +102,17 @@ public class ChatController {
         String contentType = sanitizeContentType(file.getContentType(), file.getOriginalFilename());
         if (!isAllowedContentType(contentType)) {
             return ResponseEntity.badRequest().body(Map.of("error", "Unsupported file type"));
+        }
+        if (!isFilenameCompatible(contentType, file.getOriginalFilename())) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Filename extension does not match the file type"));
+        }
+
+        try {
+            if (!FileSignatureValidator.matches(file, contentType)) {
+                return ResponseEntity.badRequest().body(Map.of("error", "File contents do not match the declared type"));
+            }
+        } catch (IOException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Could not inspect the uploaded file"));
         }
 
         String publicId = UUID.randomUUID().toString();
@@ -152,6 +164,7 @@ public class ChatController {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(parseMediaType(contentType));
+        headers.set("X-Content-Type-Options", "nosniff");
         headers.setContentLength(file.getLength());
         headers.setCacheControl(CacheControl.maxAge(30, TimeUnit.DAYS).cachePrivate());
 
@@ -173,7 +186,7 @@ public class ChatController {
         if (trueEmail == null || chatMessage == null) return;
 
         String recipientEmail = normalizeEmail(chatMessage.getRecipientEmail());
-        if (recipientEmail == null || !userRepository.existsByEmailIgnoreCase(recipientEmail)) return;
+        if (recipientEmail == null) return;
         if (!areAcceptedContacts(trueEmail, recipientEmail)) return;
 
         String type = normalizeMessageType(chatMessage.getMessageType());
@@ -216,7 +229,7 @@ public class ChatController {
         String senderEmail = principalEmail(principal);
         if (senderEmail == null || payload == null) return;
 
-        var sender = userRepository.findByEmailIgnoreCase(senderEmail);
+        var sender = userRepository.findByEmail(senderEmail);
         if (sender == null || !sender.isTypingIndicatorsEnabled()) return;
 
         String recipientEmail = normalizeEmail(payload.get("recipientEmail"));
@@ -262,7 +275,10 @@ public class ChatController {
 
     private boolean areAcceptedContacts(String user1, String user2) {
         if (user1 == null || user2 == null || user1.equalsIgnoreCase(user2)) return false;
-        return !requestRepository.findAcceptedBetween(normalizeEmail(user1), normalizeEmail(user2)).isEmpty();
+        return requestRepository.existsByPairKeyAndStatus(
+            com.neosis.model.ChatRequest.buildPairKey(user1, user2),
+            "ACCEPTED"
+        );
     }
 
     private boolean isMediaOwnedByConversation(GridFSFile file, String senderEmail, String recipientEmail) {
@@ -326,6 +342,39 @@ public class ChatController {
         if (contentType == null) return false;
         return ALLOWED_MEDIA_TYPES.contains(contentType)
             || ALLOWED_DOCUMENT_TYPES.contains(contentType);
+    }
+
+    private boolean isFilenameCompatible(String contentType, String filename) {
+        if (filename == null) return false;
+        String lowerName = filename.trim().toLowerCase(Locale.ROOT);
+        int dot = lowerName.lastIndexOf('.');
+        if (dot < 0 || dot == lowerName.length() - 1) return false;
+        String extension = lowerName.substring(dot + 1);
+
+        return switch (contentType) {
+            case "image/jpeg" -> Set.of("jpg", "jpeg").contains(extension);
+            case "image/png" -> "png".equals(extension);
+            case "image/webp" -> "webp".equals(extension);
+            case "image/gif" -> "gif".equals(extension);
+            case "video/mp4" -> "mp4".equals(extension);
+            case "video/webm" -> "webm".equals(extension);
+            case "video/quicktime" -> "mov".equals(extension);
+            case "audio/mpeg" -> "mp3".equals(extension);
+            case "audio/mp4" -> Set.of("m4a", "mp4").contains(extension);
+            case "audio/webm" -> "webm".equals(extension);
+            case "audio/ogg" -> Set.of("ogg", "oga").contains(extension);
+            case "audio/wav", "audio/x-wav" -> "wav".equals(extension);
+            case "application/pdf" -> "pdf".equals(extension);
+            case "text/plain" -> "txt".equals(extension);
+            case "text/csv" -> "csv".equals(extension);
+            case "application/msword" -> "doc".equals(extension);
+            case "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> "docx".equals(extension);
+            case "application/vnd.ms-excel" -> "xls".equals(extension);
+            case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" -> "xlsx".equals(extension);
+            case "application/vnd.ms-powerpoint" -> "ppt".equals(extension);
+            case "application/vnd.openxmlformats-officedocument.presentationml.presentation" -> "pptx".equals(extension);
+            default -> false;
+        };
     }
 
     private boolean isPreviewable(String contentType) {

@@ -18,8 +18,5 @@ public interface ChatMessageRepository extends MongoRepository<ChatMessage, Stri
     @Query(value = "{ '$and': [ { 'createdAt': { '$gt': ?2 } }, { '$or': [ { 'senderEmail': ?0, 'recipientEmail': ?1 }, { 'senderEmail': ?1, 'recipientEmail': ?0 } ] } ] }", sort = "{ 'createdAt': -1 }")
     List<ChatMessage> findLatestChatHistoryAfter(String user1, String user2, LocalDateTime after, Pageable pageable);
 
-    @Query(value = "{ 'senderEmail': ?0, 'recipientEmail': ?1, 'readAt': null }", count = true)
-    long countUnread(String senderEmail, String recipientEmail);
-
     void deleteBySenderEmailOrRecipientEmail(String senderEmail, String recipientEmail);
 }

@@ -7,7 +7,7 @@ import {
   FileText, Pin, BellOff, BellRing, UserMinus
 } from 'lucide-react';
 import SockJS from 'sockjs-client';
-import { Client } from '@stomp/stompjs';
+import { Client, ReconnectionTimeMode } from '@stomp/stompjs';
 import api, { BACKEND_URL, getApiErrorMessage } from '../api';
 import { AuthContext } from '../context/AuthContext';
 import SettingsModal from './SettingsModal';
@@ -190,6 +190,7 @@ function NeosisChatInner() {
   const currentUserRef = useRef(currentUser);
   const friendsRef = useRef(friends);
   const historyAbortRef = useRef(null);
+  const realtimeErrorShownRef = useRef(false);
 
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
@@ -333,11 +334,16 @@ function NeosisChatInner() {
 
     const client = new Client({
       webSocketFactory: () => new SockJS(`${BACKEND_URL}/ws`, null, { withCredentials: true }),
-      reconnectDelay: 5000,
+      reconnectDelay: 1_000,
+      reconnectTimeMode: ReconnectionTimeMode.EXPONENTIAL,
+      maxReconnectDelay: 30_000,
+      connectionTimeout: 20_000,
+      discardWebsocketOnCommFailure: true,
       heartbeatIncoming: 10000,
       heartbeatOutgoing: 10000,
       onConnect: () => {
         setIsRealtimeConnected(true);
+        realtimeErrorShownRef.current = false;
 
         client.subscribe('/user/queue/messages', (frame) => {
           try {
@@ -457,7 +463,10 @@ function NeosisChatInner() {
       onDisconnect: () => setIsRealtimeConnected(false),
       onStompError: () => {
         setIsRealtimeConnected(false);
-        showToast('Realtime connection interrupted. Reconnecting…', 'info');
+        if (!realtimeErrorShownRef.current) {
+          realtimeErrorShownRef.current = true;
+          showToast('Realtime connection interrupted. Reconnecting...', 'info');
+        }
       },
       onWebSocketClose: () => setIsRealtimeConnected(false),
       onWebSocketError: () => setIsRealtimeConnected(false)
@@ -468,10 +477,8 @@ function NeosisChatInner() {
   }, [cleanupCallResources, fetchSidebarData, markConversationRead, showToast]);
 
   useEffect(() => {
-    if (!authUser?.email) return undefined;
+    if (!authUser?.email || !hasAcceptedTC) return undefined;
 
-    setCurrentUser(authUser);
-    setHasAcceptedTC(authUser.termsAccepted === true || authUser.termsAccepted === 'true');
     connectWebSocket();
     fetchSidebarData();
 
@@ -489,9 +496,11 @@ function NeosisChatInner() {
         clearInterval(recordingTimerRef.current);
       }
     };
-  }, [authUser, fetchSidebarData, connectWebSocket, cleanupCallResources]);
+  }, [authUser?.email, hasAcceptedTC, fetchSidebarData, connectWebSocket, cleanupCallResources]);
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]); 
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: isChatLoading ? 'auto' : 'smooth' });
+  }, [messages.length, activeChat, isChatLoading]);
 
   const sendWebRTCSignal = useCallback((payload) => {
     if (!stompClientRef.current?.connected) return false;

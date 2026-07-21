@@ -35,13 +35,13 @@ Recommended path:
 - Add limits by authenticated user ID/email.
 - Add route-specific and global abuse protection.
 
-### 4. Upload security needs deeper validation
+### 4. Upload security still needs malware scanning
 
-The backend checks content type but does not inspect file signatures or scan malware.
+The backend checks allowlisted content types and leading file signatures, but it does
+not inspect valid documents or media for malicious embedded content.
 
 Recommended path:
 
-- Validate file magic bytes.
 - Add antivirus scanning.
 - Add per-user quotas.
 - Store large media outside MongoDB GridFS if storage grows.
