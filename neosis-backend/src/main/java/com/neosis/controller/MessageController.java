@@ -2,6 +2,7 @@ package com.neosis.controller;
 
 import com.mongodb.client.result.UpdateResult;
 import com.neosis.model.ChatMessage;
+import com.neosis.model.ChatRequest;
 import com.neosis.model.ConversationPreference;
 import com.neosis.repository.ChatMessageRepository;
 import com.neosis.repository.ChatRequestRepository;
@@ -63,7 +64,7 @@ public class MessageController {
         String myEmail = authenticatedEmail(token);
         String friend = normalizeEmail(friendEmail);
         if (myEmail == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Unauthorized"));
-        if (friend == null || myEmail.equals(friend) || requestRepository.findAcceptedBetween(myEmail, friend).isEmpty()) {
+        if (friend == null || myEmail.equals(friend) || !areAcceptedContacts(myEmail, friend)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Contact relationship required"));
         }
 
@@ -85,7 +86,7 @@ public class MessageController {
         String myEmail = authenticatedEmail(token);
         String friend = normalizeEmail(friendEmail);
         if (myEmail == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Unauthorized"));
-        if (friend == null || requestRepository.findAcceptedBetween(myEmail, friend).isEmpty()) {
+        if (friend == null || !areAcceptedContacts(myEmail, friend)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Contact relationship required"));
         }
 
@@ -112,6 +113,11 @@ public class MessageController {
         if (token == null || token.getPrincipal() == null) return null;
         Object email = token.getPrincipal().getAttributes().get("email");
         return normalizeEmail(email == null ? token.getName() : email.toString());
+    }
+
+    private boolean areAcceptedContacts(String user1, String user2) {
+        return user1 != null && user2 != null && !user1.equalsIgnoreCase(user2)
+            && requestRepository.existsByPairKeyAndStatus(ChatRequest.buildPairKey(user1, user2), "ACCEPTED");
     }
 
     private String normalizeEmail(String email) {

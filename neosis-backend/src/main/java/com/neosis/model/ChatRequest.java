@@ -2,7 +2,7 @@ package com.neosis.model;
 
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.CompoundIndex;
-import org.springframework.data.mongodb.core.index.Indexed;
+import org.springframework.data.mongodb.core.index.CompoundIndexes;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
@@ -11,7 +11,11 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @Document(collection = "chat_requests")
-@CompoundIndex(name = "unique_pair_idx", def = "{ 'pairKey': 1 }", unique = true)
+@CompoundIndexes({
+    @CompoundIndex(name = "unique_pair_idx", def = "{ 'pairKey': 1 }", unique = true),
+    @CompoundIndex(name = "sender_status_idx", def = "{ 'senderEmail': 1, 'status': 1 }"),
+    @CompoundIndex(name = "receiver_status_idx", def = "{ 'receiverEmail': 1, 'status': 1 }")
+})
 public class ChatRequest {
 
     @Id
@@ -21,7 +25,6 @@ public class ChatRequest {
     private String receiverEmail;
     private String status;
 
-    @Indexed
     private String pairKey;
 
     private LocalDateTime createdAt;

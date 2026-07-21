@@ -7,7 +7,6 @@ import org.springframework.stereotype.Repository;
 
 import java.util.Collection;
 import java.util.List;
-import java.util.Optional;
 
 @Repository
 public interface ChatRequestRepository extends MongoRepository<ChatRequest, String> {
@@ -16,13 +15,12 @@ public interface ChatRequestRepository extends MongoRepository<ChatRequest, Stri
 
     boolean existsByPairKeyAndStatusIn(String pairKey, Collection<String> statuses);
 
-    Optional<ChatRequest> findByPairKeyAndStatus(String pairKey, String status);
-
-    @Query("{ '$or': [ { 'senderEmail': ?0, 'receiverEmail': ?1 }, { 'senderEmail': ?1, 'receiverEmail': ?0 } ], 'status': 'ACCEPTED' }")
-    List<ChatRequest> findAcceptedBetween(String user1, String user2);
+    boolean existsByPairKeyAndStatus(String pairKey, String status);
 
     @Query("{ '$or': [ { 'senderEmail': ?0 }, { 'receiverEmail': ?0 } ], 'status': 'ACCEPTED' }")
     List<ChatRequest> findAllAcceptedForUser(String email);
+
+    long deleteByPairKeyAndStatus(String pairKey, String status);
 
     void deleteBySenderEmailOrReceiverEmail(String senderEmail, String receiverEmail);
 }

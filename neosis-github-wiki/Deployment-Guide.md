@@ -115,7 +115,7 @@ https://your-backend-domain.com/login/oauth2/code/google
 - Root directory: `neosis-backend`
 - Runtime: Docker or Java
 - Environment variables: set all backend variables
-- Health check path: `/actuator/health`
+- Health check path: `/actuator/health/readiness`
 
 ### Frontend as Static Site
 
@@ -142,7 +142,7 @@ Backend should still be hosted separately because this project uses a long-runni
 - Backend URL is configured as frontend `VITE_BACKEND_URL`.
 - Google OAuth redirect URI uses the deployed backend domain.
 - MongoDB Atlas allows backend network access.
-- Backend `/actuator/health` returns healthy.
+- Backend `/actuator/health/readiness` returns healthy.
 - Frontend login redirects to Google.
 - After login, browser returns to `/chat`.
 - WebSocket connects to `/ws`.

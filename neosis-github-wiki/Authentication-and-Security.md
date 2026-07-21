@@ -31,7 +31,7 @@ This is required when frontend and backend are deployed on different HTTPS origi
 
 ## CSRF model
 
-The backend uses `CookieCsrfTokenRepository.withHttpOnlyFalse()` and exposes `GET /api/csrf`.
+The backend stores CSRF tokens in the server-side session and exposes `GET /api/csrf`.
 
 The frontend:
 
@@ -42,10 +42,8 @@ The frontend:
 
 ## CORS model
 
-Allowed origins:
-
-- `http://localhost:5173`
-- configured `FRONTEND_URL`
+Allowed origins come from the exact, comma-separated `ALLOWED_ORIGINS` setting. It
+falls back to `FRONTEND_URL` when not explicitly configured.
 
 Credentials are enabled. This is correct for session-based auth, but the configured frontend URL must match the browser origin exactly.
 
@@ -59,10 +57,13 @@ WebSocket endpoint:
 
 Allowed origins are the same frontend origins. Messages are routed through user-specific queues.
 
+The inbound channel requires an authenticated user with accepted terms, permits only
+the five application user queues, and rejects sends to destinations other than the
+three documented `/app/chat.*` handlers.
+
 Backend methods validate:
 
 - Sender identity from authenticated principal.
-- Recipient exists.
 - Sender and recipient are accepted contacts.
 - Message type is allowed.
 - Media belongs to the sender-recipient conversation.
@@ -77,21 +78,22 @@ Current safeguards:
 - Application-level upload cap of 15 MB.
 - Multipart request limits configured.
 - Allowed content types are restricted.
+- Leading file bytes must match the declared content type.
 - File names are sanitized.
 - Media access checks sender/recipient ownership.
 - Documents are served as attachments; media can be previewed inline.
 
 ## Rate limiting
 
-`RateLimitFilter` applies a 60-second window to selected endpoints:
+`RateLimitFilter` applies bounded 60-second windows. Destructive and upload routes
+have tighter limits, while every API route receives a general per-user or per-IP cap.
 
 | Method | Path | Limit per window |
 |---|---|---:|
 | POST | `/api/chat/upload` | 20 |
 | POST | `/api/contacts/request` | 30 |
-| GET | `/api/users/check` | 60 |
-
-The limiter uses session ID when available, otherwise remote IP.
+The limiter uses the authenticated identity when available and remote IP before login.
+Its in-memory bucket map is capped and periodically removes expired entries.
 
 ## Current security limitations
 
@@ -107,7 +109,9 @@ The frontend blocks context menu and some developer tool shortcuts. This can red
 
 ### CSP can be stricter
 
-The current CSP allows `'unsafe-inline'` for scripts and styles. In production, replace inline scripts/styles with nonce or hash based policies where possible.
+The production CSP restricts network and media access to the deployed backend, but
+styles still require `'unsafe-inline'` because the current UI uses inline style values.
+Move those styles to compiled classes or add nonce-based policies to remove it.
 
 ### In-memory rate limiting is not distributed
 

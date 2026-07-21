@@ -1,0 +1,79 @@
+services:
+  - type: web
+    name: neosis-static-site
+    runtime: static
+    buildCommand: cd neosis-frontend && npm ci --no-audit --no-fund && npm run build
+    staticPublishPath: ./neosis-frontend/dist
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: NODE_VERSION
+        value: 24.18.0
+      - key: VITE_BACKEND_URL
+        value: https://neosis-433w.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://neosis-433w.onrender.com wss://neosis-433w.onrender.com stun: turn: turns:; media-src 'self' blob: data: https://neosis-433w.onrender.com; img-src 'self' data: blob: https://neosis-433w.onrender.com; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Strict-Transport-Security
+        value: max-age=31536000; includeSubDomains
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: Permissions-Policy
+        value: camera=(self), microphone=(self), geolocation=()
+      - path: /*
+        name: Cross-Origin-Opener-Policy
+        value: same-origin-allow-popups
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      - path: /index.html
+        name: Cache-Control
+        value: no-store
+      - path: /sw.js
+        name: Cache-Control
+        value: no-cache
+      - path: /registerSW.js
+        name: Cache-Control
+        value: no-cache
+      - path: /manifest.webmanifest
+        name: Cache-Control
+        value: no-cache
+
+  - type: web
+    name: neosis-433w
+    runtime: docker
+    dockerfilePath: ./neosis-backend/Dockerfile
+    dockerContext: ./neosis-backend
+    healthCheckPath: /actuator/health/readiness
+    maxShutdownDelaySeconds: 30
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: MONGO_URI
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        value: https://neosis-static-site.onrender.com
+      - key: ALLOWED_ORIGINS
+        value: https://neosis-static-site.onrender.com
+      - key: SESSION_TIMEOUT
+        value: 24h
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: SESSION_COOKIE_SAME_SITE
+        value: none

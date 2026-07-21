@@ -65,20 +65,6 @@ Response:
 }
 ```
 
-### `GET /api/users/check?email={email}`
-
-Checks whether a user exists and sends a contact lookup notification to that user.
-
-Authentication: required.
-
-Responses:
-
-| Status | Meaning |
-|---:|---|
-| 200 | User found. |
-| 401 | Not authenticated. |
-| 404 | User does not exist. |
-
 ## Contacts
 
 ### `POST /api/contacts/request?receiverEmail={email}`
@@ -121,12 +107,6 @@ Validation:
 - Authenticated user must be the receiver.
 - Request status must be `PENDING`.
 
-### `GET /api/contacts/friends`
-
-Returns accepted contacts as a list of email addresses.
-
-Authentication: required.
-
 ## Messages
 
 ### `GET /api/messages/history/{friendEmail}?limit=50`
@@ -164,9 +144,9 @@ Validation:
 
 - File must not be empty.
 - File must be <= 15 MB.
-- Recipient must exist.
 - Sender and recipient must be accepted contacts.
 - Content type must be allowed.
+- File signature must match its declared content type.
 
 Response:
 

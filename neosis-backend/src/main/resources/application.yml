@@ -2,22 +2,30 @@ server:
   port: ${PORT:8080}
   shutdown: graceful
   forward-headers-strategy: framework
+  max-http-request-header-size: 16KB
+  error:
+    include-message: never
+    include-binding-errors: never
+    include-stacktrace: never
+    include-exception: false
   compression:
     enabled: true
     mime-types: application/json,text/plain,text/css,application/javascript
   servlet:
     session:
-      timeout: 30d
+      timeout: ${SESSION_TIMEOUT:24h}
       cookie:
         name: NEOSIS_SESSION
         http-only: true
         same-site: ${SESSION_COOKIE_SAME_SITE:none}
         secure: ${SESSION_COOKIE_SECURE:true}
-        max-age: 30d
+        max-age: ${SESSION_TIMEOUT:24h}
 
 app:
   frontend:
     url: ${FRONTEND_URL:https://neosis-static-site.onrender.com}
+  cors:
+    allowed-origins: ${ALLOWED_ORIGINS:${FRONTEND_URL:https://neosis-static-site.onrender.com}}
 
 spring:
   application:
@@ -33,7 +41,7 @@ spring:
       uri: ${MONGO_URI:mongodb://localhost:27017/neosis}
       auto-index-creation: true
   session:
-    timeout: 30d
+    timeout: ${SESSION_TIMEOUT:24h}
     mongodb:
       collection-name: neosis_sessions
   security:
@@ -56,9 +64,16 @@ management:
     health:
       probes:
         enabled: true
+      group:
+        readiness:
+          include: readinessState,mongo
+        liveness:
+          include: livenessState
       show-details: never
 
 logging:
+  pattern:
+    level: "%5p [requestId:%X{requestId:-system}]"
   level:
     root: INFO
     org.springframework.security: WARN

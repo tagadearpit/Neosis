@@ -2,7 +2,7 @@
 
 ## Overview
 
-The backend is a Spring Boot 3.2.4 application running on Java 17. It provides REST APIs, OAuth2 login, CSRF protection, WebSocket/STOMP messaging, MongoDB persistence, and GridFS file storage.
+The backend is a Spring Boot 3.5 application running on Java 17. It provides REST APIs, OAuth2 login, CSRF protection, WebSocket/STOMP messaging, MongoDB persistence, and GridFS file storage.
 
 ## Important files
 
@@ -114,7 +114,7 @@ The container runs as a non-root `app` user and exposes port `8080`.
 The backend exposes health and info endpoints:
 
 ```txt
-/actuator/health
+/actuator/health/readiness
 /actuator/info
 ```
 

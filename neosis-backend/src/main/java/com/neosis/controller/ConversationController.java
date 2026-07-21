@@ -5,13 +5,14 @@ import com.neosis.dto.UpdateConversationPreferenceRequest;
 import com.neosis.model.ChatRequest;
 import com.neosis.model.ConversationPreference;
 import com.neosis.model.User;
-import com.neosis.repository.ChatMessageRepository;
 import com.neosis.repository.ChatRequestRepository;
 import com.neosis.repository.ConversationPreferenceRepository;
 import com.neosis.repository.UserRepository;
 import com.mongodb.client.result.UpdateResult;
+import org.bson.Document;
 import jakarta.validation.Valid;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.aggregation.Aggregation;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
@@ -29,6 +30,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -42,7 +44,6 @@ public class ConversationController {
 
     private final ChatRequestRepository requestRepository;
     private final ConversationPreferenceRepository preferenceRepository;
-    private final ChatMessageRepository messageRepository;
     private final UserRepository userRepository;
     private final MongoTemplate mongoTemplate;
     private final SimpMessagingTemplate messagingTemplate;
@@ -50,14 +51,12 @@ public class ConversationController {
     public ConversationController(
         ChatRequestRepository requestRepository,
         ConversationPreferenceRepository preferenceRepository,
-        ChatMessageRepository messageRepository,
         UserRepository userRepository,
         MongoTemplate mongoTemplate,
         SimpMessagingTemplate messagingTemplate
     ) {
         this.requestRepository = requestRepository;
         this.preferenceRepository = preferenceRepository;
-        this.messageRepository = messageRepository;
         this.userRepository = userRepository;
         this.mongoTemplate = mongoTemplate;
         this.messagingTemplate = messagingTemplate;
@@ -77,6 +76,7 @@ public class ConversationController {
             .collect(Collectors.toMap(User::getEmail, user -> user));
         Map<String, ConversationPreference> preferencesByContact = preferenceRepository.findByOwnerEmail(ownerEmail).stream()
             .collect(Collectors.toMap(ConversationPreference::getContactEmail, pref -> pref, (first, ignored) -> first));
+        Map<String, Long> unreadByContact = unreadCounts(ownerEmail, contactEmails);
 
         List<ConversationSummary> summaries = new ArrayList<>();
         for (String contactEmail : contactEmails) {
@@ -91,7 +91,7 @@ public class ConversationController {
                 contact == null ? "Available on Neosis" : contact.getStatusMessage(),
                 preference != null && preference.isPinned(),
                 preference != null && preference.isMuted(),
-                messageRepository.countUnread(contactEmail, ownerEmail)
+                unreadByContact.getOrDefault(contactEmail, 0L)
             ));
         }
 
@@ -153,10 +153,10 @@ public class ConversationController {
         String contact = normalizeEmail(contactEmail);
         if (ownerEmail == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Unauthorized"));
 
-        List<ChatRequest> relationships = requestRepository.findAcceptedBetween(ownerEmail, contact);
-        if (relationships.isEmpty()) return ResponseEntity.notFound().build();
+        if (contact == null) return ResponseEntity.badRequest().body(Map.of("error", "Invalid contact"));
+        long removed = requestRepository.deleteByPairKeyAndStatus(ChatRequest.buildPairKey(ownerEmail, contact), "ACCEPTED");
+        if (removed == 0) return ResponseEntity.notFound().build();
 
-        requestRepository.deleteAll(relationships);
         preferenceRepository.deleteByOwnerEmailAndContactEmail(ownerEmail, contact);
         preferenceRepository.deleteByOwnerEmailAndContactEmail(contact, ownerEmail);
         messagingTemplate.convertAndSendToUser(contact, "/queue/notifications", Map.of("type", "CONTACT_REMOVED"));
@@ -178,7 +178,28 @@ public class ConversationController {
 
     private boolean areAcceptedContacts(String user1, String user2) {
         return user1 != null && user2 != null && !user1.equalsIgnoreCase(user2)
-            && !requestRepository.findAcceptedBetween(user1, user2).isEmpty();
+            && requestRepository.existsByPairKeyAndStatus(ChatRequest.buildPairKey(user1, user2), "ACCEPTED");
+    }
+
+    private Map<String, Long> unreadCounts(String ownerEmail, Set<String> contactEmails) {
+        if (contactEmails.isEmpty()) return Map.of();
+
+        Aggregation aggregation = Aggregation.newAggregation(
+            Aggregation.match(Criteria.where("recipientEmail").is(ownerEmail)
+                .and("readAt").is(null)
+                .and("senderEmail").in(contactEmails)),
+            Aggregation.group("senderEmail").count().as("count")
+        );
+
+        Map<String, Long> counts = new HashMap<>();
+        for (Document result : mongoTemplate.aggregate(aggregation, "messages", Document.class).getMappedResults()) {
+            Object sender = result.get("_id");
+            Object count = result.get("count");
+            if (sender instanceof String email && count instanceof Number number) {
+                counts.put(email, number.longValue());
+            }
+        }
+        return counts;
     }
 
     private String authenticatedEmail(OAuth2AuthenticationToken token) {

@@ -1,5 +1,6 @@
 package com.neosis.controller;
 
+import com.neosis.config.TermsAcceptedFilter;
 import com.neosis.dto.DeleteAccountRequest;
 import com.neosis.dto.UpdateProfileRequest;
 import com.neosis.dto.UpdateUserPreferencesRequest;
@@ -26,7 +27,6 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDateTime;
@@ -121,13 +121,13 @@ public class UserController {
 
         // Idempotent, user-scoped cleanup. Mongo transactions are intentionally not assumed because
         // many managed/free deployments do not expose a replica set to the application.
+        requestRepository.deleteBySenderEmailOrReceiverEmail(email, email);
+        preferenceRepository.deleteByOwnerEmailOrContactEmail(email, email);
         gridFsTemplate.delete(new Query(new Criteria().orOperator(
             Criteria.where("metadata.senderEmail").is(email),
             Criteria.where("metadata.recipientEmail").is(email)
         )));
         messageRepository.deleteBySenderEmailOrRecipientEmail(email, email);
-        requestRepository.deleteBySenderEmailOrReceiverEmail(email, email);
-        preferenceRepository.deleteByOwnerEmailOrContactEmail(email, email);
         userRepository.delete(user);
 
         HttpSession session = servletRequest.getSession(false);
@@ -137,7 +137,10 @@ public class UserController {
     }
 
     @PostMapping("/accept-terms")
-    public ResponseEntity<?> acceptTerms(@AuthenticationPrincipal OAuth2User principal) {
+    public ResponseEntity<?> acceptTerms(
+        @AuthenticationPrincipal OAuth2User principal,
+        HttpServletRequest servletRequest
+    ) {
         User user = resolveUser(principal);
         if (user == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Not authenticated"));
 
@@ -145,28 +148,9 @@ public class UserController {
         user.setTermsAcceptedAt(LocalDateTime.now());
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
+        servletRequest.getSession(true).setAttribute(TermsAcceptedFilter.SESSION_ATTRIBUTE, true);
         return ResponseEntity.ok(Map.of("termsAccepted", true));
     }
-
-    @GetMapping("/check")
-    public ResponseEntity<?> checkUserExists(@RequestParam String email, @AuthenticationPrincipal OAuth2User principal) {
-        if (principal == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Not authenticated"));
-
-        String recipientEmail = normalizeEmail(email);
-        if (recipientEmail == null) return ResponseEntity.badRequest().body(Map.of("error", "Invalid email"));
-        User recipient = userRepository.findByEmailIgnoreCase(recipientEmail);
-        if (recipient == null) return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "User does not exist"));
-
-        String senderName = principal.getAttribute("name") != null ? principal.getAttribute("name") : "Someone";
-        Map<String, String> notification = new HashMap<>();
-        notification.put("type", "CONTACT_LOOKUP");
-        notification.put("senderName", senderName);
-        notification.put("message", senderName + " wants to start a conversation.");
-
-        messagingTemplate.convertAndSendToUser(recipientEmail, "/queue/notifications", notification);
-        return ResponseEntity.ok(Map.of("exists", true));
-    }
-
 
     private void notifyAcceptedContacts(String email, String type) {
         requestRepository.findAllAcceptedForUser(email).stream()
@@ -186,7 +170,7 @@ public class UserController {
         String email = normalizeEmail(principal.getAttribute("email"));
         if (email == null) return null;
 
-        User user = userRepository.findByEmailIgnoreCase(email);
+        User user = userRepository.findByEmail(email);
         if (user == null) {
             user = new User();
             user.setEmail(email);

@@ -25,7 +25,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/React-18.2-61DAFB?logo=react&logoColor=white" alt="React 18.2" />
   <img src="https://img.shields.io/badge/Vite-7.3-646CFF?logo=vite&logoColor=white" alt="Vite 7.3" />
-  <img src="https://img.shields.io/badge/Spring_Boot-3.2-6DB33F?logo=springboot&logoColor=white" alt="Spring Boot 3.2" />
+  <img src="https://img.shields.io/badge/Spring_Boot-3.5-6DB33F?logo=springboot&logoColor=white" alt="Spring Boot 3.5" />
   <img src="https://img.shields.io/badge/Java-17-ED8B00?logo=openjdk&logoColor=white" alt="Java 17" />
   <img src="https://img.shields.io/badge/MongoDB-7-47A248?logo=mongodb&logoColor=white" alt="MongoDB 7" />
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white" alt="Docker ready" />
@@ -153,7 +153,8 @@ Neosis is structured as two independently deployable services:
 - HTTP rate limiting
 - WebSocket rate limiting
 - Bean validation and centralized error handling
-- File-size and MIME-type restrictions
+- Request IDs for correlating API responses with backend logs
+- File-size, content-type, and file-signature restrictions
 - Graceful shutdown
 - Spring Boot health probes
 - Non-root Docker runtime images
@@ -171,7 +172,7 @@ Neosis is structured as two independently deployable services:
 | Real-time transport | STOMP, SockJS, WebSocket |
 | Calls | WebRTC, STUN and optional TURN |
 | PWA | Vite PWA plugin, service worker, web manifest |
-| Backend | Java 17, Spring Boot 3.2 |
+| Backend | Java 17, Spring Boot 3.5 |
 | Security | Spring Security, OAuth 2.0, CSRF, secure sessions |
 | Data | MongoDB, Spring Data MongoDB, GridFS |
 | Session store | Spring Session Data MongoDB |
@@ -256,8 +257,8 @@ Neosis/
 │   └── pom.xml
 ├── neosis-github-wiki/
 ├── docker-compose.yml
-├── PRODUCTION_AUDIT.md
-├── VALIDATION_REPORT.md
+├── render.yaml
+├── SECURITY.md
 ├── LICENSE
 └── README.md
 ```
@@ -272,7 +273,7 @@ Install the following tools:
 
 - **Java 17 or newer**
 - **Maven 3.9 or newer**
-- **Node.js 20.19–22.x**
+- **Node.js 24 LTS** (Vite also supports Node 20.19+ and 22.12+)
 - **npm**
 - **MongoDB 7.x**, or a MongoDB Atlas database
 - A **Google OAuth 2.0 Web Application** client
@@ -297,6 +298,8 @@ Edit `neosis-backend/.env`:
 PORT=8080
 MONGO_URI=mongodb://localhost:27017/neosis
 FRONTEND_URL=http://localhost:5173
+ALLOWED_ORIGINS=http://localhost:5173
+SESSION_TIMEOUT=24h
 GOOGLE_CLIENT_ID=your-google-client-id
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 SESSION_COOKIE_SECURE=false
@@ -320,6 +323,8 @@ mvn spring-boot:run
 $env:PORT="8080"
 $env:MONGO_URI="mongodb://localhost:27017/neosis"
 $env:FRONTEND_URL="http://localhost:5173"
+$env:ALLOWED_ORIGINS="http://localhost:5173"
+$env:SESSION_TIMEOUT="24h"
 $env:GOOGLE_CLIENT_ID="your-google-client-id"
 $env:GOOGLE_CLIENT_SECRET="your-google-client-secret"
 $env:SESSION_COOKIE_SECURE="false"
@@ -366,7 +371,9 @@ http://localhost:5173
 |---|---:|---|---|
 | `PORT` | No | `8080` | HTTP port. Render supplies this automatically. |
 | `MONGO_URI` | Yes | `mongodb://localhost:27017/neosis` | MongoDB connection URI. |
-| `FRONTEND_URL` | Yes | `https://neosis-static-site.onrender.com` | Exact allowed frontend origin, without a trailing slash. |
+| `FRONTEND_URL` | Yes | `https://neosis-static-site.onrender.com` | OAuth success redirect target, without a trailing slash. |
+| `ALLOWED_ORIGINS` | Yes | `https://neosis-static-site.onrender.com` | Comma-separated exact browser origins allowed by CORS and WebSocket. |
+| `SESSION_TIMEOUT` | No | `24h` | Server session and cookie lifetime. |
 | `GOOGLE_CLIENT_ID` | Yes | `...apps.googleusercontent.com` | Google OAuth Web Application client ID. |
 | `GOOGLE_CLIENT_SECRET` | Yes | `secret` | Google OAuth client secret. Never expose this to the frontend. |
 | `SESSION_COOKIE_SECURE` | Yes in production | `true` | Sends the session cookie only over HTTPS. |
@@ -466,6 +473,10 @@ docker compose down -v
 
 Neosis is designed to run as two Render services from the same repository.
 
+The root [`render.yaml`](render.yaml) defines both services, security headers, SPA rewrites,
+health checks, and deploy-after-CI behavior. Review its secret placeholders before applying
+the Blueprint to an existing Render account.
+
 ### Frontend — Render Static Site
 
 | Setting | Value |
@@ -490,7 +501,7 @@ Add this SPA rewrite:
 | Runtime | Docker |
 | Root directory | `neosis-backend` |
 | Dockerfile path | `./Dockerfile` |
-| Health check path | `/actuator/health` |
+| Health check path | `/actuator/health/readiness` |
 | Build command | Leave empty |
 | Start command | Leave empty |
 
@@ -499,6 +510,8 @@ Required production variables:
 ```env
 MONGO_URI=mongodb+srv://USER:PASSWORD@CLUSTER.mongodb.net/neosis?retryWrites=true&w=majority
 FRONTEND_URL=https://YOUR-FRONTEND.onrender.com
+ALLOWED_ORIGINS=https://YOUR-FRONTEND.onrender.com
+SESSION_TIMEOUT=24h
 GOOGLE_CLIENT_ID=your-google-client-id
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 SESSION_COOKIE_SECURE=true
@@ -540,7 +553,6 @@ All user-scoped endpoints require an authenticated session unless noted otherwis
 | `PATCH` | `/api/users/me/preferences` | Update application preferences |
 | `DELETE` | `/api/users/me` | Permanently delete the account |
 | `POST` | `/api/users/accept-terms` | Record terms acceptance |
-| `GET` | `/api/users/check` | Check authentication status |
 
 ### Contacts
 
@@ -550,7 +562,6 @@ All user-scoped endpoints require an authenticated session unless noted otherwis
 | `GET` | `/api/contacts/pending` | List pending requests |
 | `POST` | `/api/contacts/accept` | Accept a request |
 | `POST` | `/api/contacts/reject` | Reject a request |
-| `GET` | `/api/contacts/friends` | List connected contacts |
 
 ### Conversations and messages
 
@@ -582,6 +593,7 @@ See [`neosis-github-wiki/API-Reference.md`](neosis-github-wiki/API-Reference.md)
 Neosis includes several baseline production controls:
 
 - OAuth authentication instead of application-managed passwords
+- Verified Google email requirement
 - Server-side sessions persisted in MongoDB
 - HttpOnly session cookies
 - `Secure` and `SameSite` cookie configuration
@@ -589,10 +601,12 @@ Neosis includes several baseline production controls:
 - Explicit credentialed CORS origin
 - Request validation
 - Centralized API error responses
-- HTTP and WebSocket rate limiting
+- Bounded HTTP and WebSocket rate limiting
+- Server-side terms enforcement for API and realtime access
+- Allowlisted WebSocket subscriptions and application destinations
 - Authenticated media endpoints
 - Media ownership checks
-- File-size and MIME-type restrictions
+- File-size, content-type, and file-signature restrictions
 - Non-root Docker containers
 - Health endpoints with restricted details
 - Secure Nginx headers for containerized frontend delivery
@@ -609,9 +623,7 @@ Neosis includes several baseline production controls:
 | End-to-end encryption | Not implemented |
 | Malware scanning | Not implemented |
 
-For public deployment at scale, add content-signature validation, malware scanning, abuse controls, security-event auditing, retention policies, secret rotation and an external penetration test.
-
-Detailed findings are documented in [`PRODUCTION_AUDIT.md`](PRODUCTION_AUDIT.md).
+For public deployment at scale, add malware scanning, abuse controls, security-event auditing, retention policies, secret rotation and an external penetration test.
 
 ---
 
@@ -654,9 +666,7 @@ docker compose up
 - [ ] Media upload and download permissions are enforced
 - [ ] Audio and video calls work across separate networks
 - [ ] Account deletion removes user-owned data
-- [ ] `/actuator/health` reports a healthy backend
-
-See [`VALIDATION_REPORT.md`](VALIDATION_REPORT.md) for the validation record included with the project.
+- [ ] `/actuator/health/readiness` reports a healthy backend
 
 ---
 
@@ -665,7 +675,7 @@ See [`VALIDATION_REPORT.md`](VALIDATION_REPORT.md) for the validation record inc
 ### Health endpoint
 
 ```text
-GET /actuator/health
+GET /actuator/health/readiness
 ```
 
 Use this endpoint for Render health checks and container probes.

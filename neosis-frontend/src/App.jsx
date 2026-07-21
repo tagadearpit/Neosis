@@ -1,9 +1,10 @@
-import React, { useContext, useEffect, useState } from 'react';
+import React, { lazy, Suspense, useContext, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-dom';
-import { ShieldCheck } from 'lucide-react';
+import { RefreshCw, ServerOff, ShieldCheck } from 'lucide-react';
 import Login from './components/Login';
-import NeosisChatWrapped from './components/NeosisChat';
 import { AuthContext, AuthProvider } from './context/AuthContext';
+
+const NeosisChatWrapped = lazy(() => import('./components/NeosisChat'));
 
 const SESSION_STEPS = [
   'Establishing secure channel',
@@ -215,15 +216,45 @@ function SessionLoader() {
 }
 
 function ProtectedRoute({ children }) {
-  const { isAuthenticated, isLoading } = useContext(AuthContext);
+  const { isAuthenticated, isLoading, sessionError, refreshSession } = useContext(AuthContext);
   if (isLoading) return <SessionLoader />;
+  if (sessionError && !isAuthenticated) return <SessionUnavailable message={sessionError} onRetry={refreshSession} />;
   return isAuthenticated ? children : <Navigate to="/login" replace />;
 }
 
 function PublicRoute({ children }) {
-  const { isAuthenticated, isLoading } = useContext(AuthContext);
+  const { isAuthenticated, isLoading, sessionError, refreshSession } = useContext(AuthContext);
   if (isLoading) return <SessionLoader />;
+  if (sessionError && !isAuthenticated) return <SessionUnavailable message={sessionError} onRetry={refreshSession} />;
   return isAuthenticated ? <Navigate to="/chat" replace /> : children;
+}
+
+function SessionUnavailable({ message, onRetry }) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[#050b18] px-6 text-[#dae2fd]">
+      <section className="w-full max-w-md rounded-lg border border-[#2d3449] bg-[#131b2e] p-8 text-center shadow-2xl">
+        <ServerOff className="mx-auto h-11 w-11 text-[#ffb4ab]" aria-hidden="true" />
+        <h1 className="mt-5 font-display text-2xl font-semibold text-white">Neosis is taking longer to respond</h1>
+        <p className="mt-3 text-sm leading-6 text-[#aebbd1]">{message}</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-7 inline-flex items-center gap-2 rounded-lg bg-[#4edea3] px-5 py-3 text-sm font-bold text-[#00422b] transition-colors hover:bg-[#6ffbbe]"
+        >
+          <RefreshCw className="h-4 w-4" aria-hidden="true" />
+          Retry connection
+        </button>
+      </section>
+    </main>
+  );
+}
+
+function ChatRoute() {
+  return (
+    <Suspense fallback={<SessionLoader />}>
+      <NeosisChatWrapped />
+    </Suspense>
+  );
 }
 
 export default function App() {
@@ -232,8 +263,8 @@ export default function App() {
       <Router>
         <Routes>
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
-          <Route path="/" element={<ProtectedRoute><NeosisChatWrapped /></ProtectedRoute>} />
-          <Route path="/chat" element={<ProtectedRoute><NeosisChatWrapped /></ProtectedRoute>} />
+          <Route path="/" element={<ProtectedRoute><ChatRoute /></ProtectedRoute>} />
+          <Route path="/chat" element={<ProtectedRoute><ChatRoute /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Routes>
       </Router>
