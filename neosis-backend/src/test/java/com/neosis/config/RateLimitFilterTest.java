@@ -19,7 +19,7 @@ class RateLimitFilterTest {
 
         MockHttpServletResponse rejected = execute(filter, "POST", "/api/chat/upload");
         assertEquals(429, rejected.getStatus());
-        assertEquals("60", rejected.getHeader("RateLimit-Limit"));
+        assertEquals("20", rejected.getHeader("RateLimit-Limit"));
     }
 
     @Test
