@@ -25,6 +25,9 @@
 @layer base {
   *, *::before, *::after { box-sizing: border-box; }
   html, body, #root { height: 100dvh; }
+  html[data-font-size="SMALL"] { font-size: 15px; }
+  html[data-font-size="MEDIUM"] { font-size: 16px; }
+  html[data-font-size="LARGE"] { font-size: 17px; }
   body {
     margin: 0; padding: 0;
     @apply bg-slate-50 text-slate-800 dark:bg-[#111313] dark:text-gray-200 overflow-hidden transition-colors duration-300;
@@ -48,10 +51,22 @@
 
 @keyframes shimmer { 100% { transform: translateX(100%); } }
 
-button:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visible {
-  outline: 2px solid #0fa384;
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visible {
+  outline: 2px solid var(--neosis-accent, #0fa384);
   outline-offset: 2px;
 }
+
+.neosis-accent-bg { background-color: var(--neosis-accent, #0fa384); }
+button.neosis-accent-bg:hover, a.neosis-accent-bg:hover { filter: brightness(0.92); }
+.neosis-accent-text { color: var(--neosis-accent, #0fa384); }
+.neosis-accent-soft {
+  color: var(--neosis-accent, #0fa384);
+  background-color: rgba(15, 163, 132, 0.1);
+  background-color: color-mix(in srgb, var(--neosis-accent, #0fa384) 12%, transparent);
+}
+.neosis-accent-focus:focus { border-color: var(--neosis-accent, #0fa384); }
+
+html[data-compact="true"] .neosis-contact-row { padding-top: 0.5rem; padding-bottom: 0.5rem; }
 
 @keyframes blink {
   0%, 100% { opacity: 1; }

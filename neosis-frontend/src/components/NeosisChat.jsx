@@ -4,7 +4,7 @@ import {
   MessageSquare, UserPlus, Bell, Send, Check, CheckCheck, ArrowLeft, Moon, Sun, 
   Loader2, Phone, Video, Search, MoreVertical, Paperclip, Smile, Mic, ShieldCheck,
   X, User, Trash2, Ban, PhoneOff, PhoneCall, ShieldAlert, Info, Settings, LogOut, UserCog, Shield,
-  FileText, Pin, BellOff, BellRing, UserMinus
+  FileText, Pin, BellOff, BellRing, UserMinus, Clock3
 } from 'lucide-react';
 import SockJS from 'sockjs-client';
 import { Client, ReconnectionTimeMode } from '@stomp/stompjs';
@@ -60,7 +60,7 @@ const highlightText = (text, highlight) => {
   const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
   return parts.map((part, i) => 
     part.toLowerCase() === highlight.toLowerCase() ? (
-      <span key={i} className="bg-[#0fa384]/30 text-[#0fa384] rounded px-0.5">{part}</span>
+      <span key={i} className="neosis-accent-soft rounded px-0.5">{part}</span>
     ) : part
   );
 };
@@ -68,6 +68,17 @@ const highlightText = (text, highlight) => {
 const resolveMediaUrl = (url) => {
   if (!url) return '';
   return url.startsWith('http') ? url : `${BACKEND_URL}${url}`;
+};
+
+const firstSafeLink = (text) => {
+  const match = typeof text === 'string' ? text.match(/https?:\/\/[^\s<>{}\[\]"]+/i) : null;
+  if (!match) return null;
+  try {
+    const url = new URL(match[0]);
+    return ['http:', 'https:'].includes(url.protocol) ? url : null;
+  } catch {
+    return null;
+  }
 };
 
 const formatMessageTime = (message) => {
@@ -86,26 +97,49 @@ const sortContacts = (contacts) => [...contacts].sort((a, b) => {
   return getContactName(a).localeCompare(getContactName(b), undefined, { sensitivity: 'base' });
 });
 
-const playNotificationTone = () => {
+const playNotificationTone = (sound = 'CHIME') => {
   try {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return;
     const context = new AudioContextClass();
     const oscillator = context.createOscillator();
     const gain = context.createGain();
-    oscillator.frequency.value = 660;
+    const soft = sound === 'SOFT';
+    oscillator.frequency.value = soft ? 440 : 660;
+    oscillator.type = soft ? 'sine' : 'triangle';
     gain.gain.setValueAtTime(0.0001, context.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.08, context.currentTime + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.12);
+    gain.gain.exponentialRampToValueAtTime(soft ? 0.035 : 0.08, context.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + (soft ? 0.2 : 0.12));
     oscillator.connect(gain);
     gain.connect(context.destination);
     oscillator.start();
-    oscillator.stop(context.currentTime + 0.13);
+    oscillator.stop(context.currentTime + (soft ? 0.21 : 0.13));
     oscillator.addEventListener('ended', () => context.close());
   } catch {
     // Browsers can block programmatic audio before user interaction.
   }
 };
+
+const isDoNotDisturbActive = (notifications) => {
+  const start = notifications?.doNotDisturbStart;
+  const end = notifications?.doNotDisturbEnd;
+  if (!start || !end) return false;
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const toMinutes = (value) => {
+    const [hours, minutes] = value.split(':').map(Number);
+    return hours * 60 + minutes;
+  };
+  const startMinutes = toMinutes(start);
+  const endMinutes = toMinutes(end);
+  return startMinutes <= endMinutes
+    ? currentMinutes >= startMinutes && currentMinutes < endMinutes
+    : currentMinutes >= startMinutes || currentMinutes < endMinutes;
+};
+
+const themeIsDark = (theme) => theme === 'DARK' || (
+  theme === 'SYSTEM' && window.matchMedia?.('(prefers-color-scheme: dark)').matches
+);
 
 const EMOJI_LIST = ["😀","😂","🤣","😊","🥰","😍","😒","😘","💕","😁","👍","🙌","✌️","✨","🔥","🎉","💯","💔","❤️","🥺","😎","🤔","🙄","😴","🤐","🤢","🤧","😷","🤯","🤠","🥳","🤫","🤭","🧐","🤓","😈","💀","👻","👽","🤖","👋","🤚","🖐","✋","🖖","👌","🤏","🤞","🤟","🤘","🤙","👈","👉","👆","👇","☝️","👍","👎","✊","👊","🤛","🤜","👏","🙌","👐","🤲","🤝","🙏","✍️","💅","🤳","💪","🦾","🦵","🦿","🦶","👣","👂","🦻","👃","🦼","🧠","🦷","🦴","👀","👁","👅","👄","💋","🩸"];
 
@@ -147,7 +181,9 @@ function NeosisChatInner() {
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const [addEmailInput, setAddEmailInput] = useState('');
   const [unreadCounts, setUnreadCounts] = useState({});
-  const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') !== 'light');
+  const [themePreference, setThemePreference] = useState(() => localStorage.getItem('themePreference') || 'SYSTEM');
+  const [isDarkMode, setIsDarkMode] = useState(() => themeIsDark(localStorage.getItem('themePreference') || 'SYSTEM'));
+  const [expiryTick, setExpiryTick] = useState(0);
   
   const [hasAcceptedTC, setHasAcceptedTC] = useState(false);
 
@@ -163,6 +199,7 @@ function NeosisChatInner() {
   const [attachment, setAttachment] = useState(null);
   const [attachmentPreview, setAttachmentPreview] = useState(null);
   const [isSending, setIsSending] = useState(false); 
+  const [revealedMedia, setRevealedMedia] = useState(() => new Set());
   
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
@@ -191,6 +228,7 @@ function NeosisChatInner() {
   const friendsRef = useRef(friends);
   const historyAbortRef = useRef(null);
   const realtimeErrorShownRef = useRef(false);
+  const loginNoticeShownRef = useRef(false);
 
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
@@ -214,15 +252,28 @@ function NeosisChatInner() {
   useEffect(() => {
     if (authUser) setCurrentUser(authUser);
   }, [authUser]);
-  useEffect(() => { 
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark'); 
-      localStorage.setItem('theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark'); 
-      localStorage.setItem('theme', 'light');
-    }
-  }, [isDarkMode]);
+  useEffect(() => {
+    const savedTheme = currentUser?.settings?.appearance?.theme;
+    if (savedTheme) setThemePreference(savedTheme);
+  }, [currentUser?.settings?.appearance?.theme]);
+
+  useEffect(() => {
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+    const applyTheme = () => setIsDarkMode(themeIsDark(themePreference));
+    applyTheme();
+    localStorage.setItem('themePreference', themePreference);
+    media?.addEventListener('change', applyTheme);
+    return () => media?.removeEventListener('change', applyTheme);
+  }, [themePreference]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', isDarkMode);
+    const appearance = currentUser?.settings?.appearance;
+    document.documentElement.style.setProperty('--neosis-accent', appearance?.accentColor || '#0fa384');
+    document.documentElement.style.setProperty('--color-primary', appearance?.accentColor || '#0fa384');
+    document.documentElement.dataset.fontSize = appearance?.fontSize || 'MEDIUM';
+    document.documentElement.dataset.compact = appearance?.compactMode ? 'true' : 'false';
+  }, [isDarkMode, currentUser?.settings?.appearance]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -261,6 +312,13 @@ function NeosisChatInner() {
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     toastTimeoutRef.current = setTimeout(() => setToast(null), 3000);
   }, []);
+
+  useEffect(() => {
+    if (currentUser?.newDeviceLogin && !loginNoticeShownRef.current) {
+      loginNoticeShownRef.current = true;
+      showToast('New device sign-in recorded. Review Active sessions if this was not you.', 'info');
+    }
+  }, [currentUser?.newDeviceLogin, showToast]);
 
   const handleAcceptTerms = async () => {
     try {
@@ -384,7 +442,24 @@ function NeosisChatInner() {
               ));
 
               const senderContact = friendsRef.current.find((contact) => contact.email === incomingMessage.senderEmail);
-              if (currentUserRef.current?.notificationSoundsEnabled !== false && !senderContact?.muted) playNotificationTone();
+              const notificationSettings = currentUserRef.current?.settings?.notifications;
+              const notificationsAllowed = notificationSettings?.messageNotifications !== false
+                && !isDoNotDisturbActive(notificationSettings)
+                && !senderContact?.muted;
+              if (notificationsAllowed && notificationSettings?.sound !== 'NONE') playNotificationTone(notificationSettings?.sound);
+              if (notificationsAllowed && notificationSettings?.desktopNotifications && 'Notification' in window && Notification.permission === 'granted') {
+                const preview = notificationSettings.preview;
+                const title = preview === 'HIDDEN'
+                  ? 'Neosis'
+                  : getContactName(senderContact || incomingMessage.senderEmail);
+                const body = preview === 'HIDDEN'
+                  ? 'New message'
+                  : (preview === 'SENDER' ? 'New message received' : (incomingMessage.content || 'Sent an attachment'));
+                new Notification(title, {
+                  body,
+                  tag: `neosis-${incomingMessage.senderEmail}`
+                });
+              }
             }
 
             setIsRemoteTyping(false);
@@ -499,6 +574,27 @@ function NeosisChatInner() {
   }, [authUser?.email, hasAcceptedTC, fetchSidebarData, connectWebSocket, cleanupCallResources]);
 
   useEffect(() => {
+    if (!authUser?.email || !hasAcceptedTC) return undefined;
+    const heartbeat = () => api.post('/api/users/presence', {}).catch(() => {});
+    heartbeat();
+    const timer = window.setInterval(heartbeat, 60_000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') heartbeat();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [authUser?.email, hasAcceptedTC]);
+
+  useEffect(() => {
+    if (!messages.some((message) => message.expiresAt)) return undefined;
+    const timer = window.setInterval(() => setExpiryTick((value) => value + 1), 30_000);
+    return () => window.clearInterval(timer);
+  }, [messages]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: isChatLoading ? 'auto' : 'smooth' });
   }, [messages.length, activeChat, isChatLoading]);
 
@@ -530,6 +626,10 @@ function NeosisChatInner() {
   const handleStartCall = async (video = true) => {
     const recipientEmail = activeChatRef.current;
     if (!recipientEmail || callStateRef.current !== 'idle') return;
+    if (activeContact?.canMessage === false) {
+      showToast('This contact is not accepting messages or calls.', 'info');
+      return;
+    }
     if (!isRealtimeConnected) {
       showToast('Realtime connection is unavailable.', 'error');
       return;
@@ -819,6 +919,10 @@ function NeosisChatInner() {
     event?.preventDefault();
     const text = newMessage.trim();
     if (isSending || (!text && !attachment)) return;
+    if (activeContact?.canMessage === false) {
+      showToast('This contact is not accepting messages.', 'info');
+      return;
+    }
     if (!isRealtimeConnected) {
       showToast('Realtime connection is unavailable. Message not sent.', 'error');
       return;
@@ -903,16 +1007,16 @@ function NeosisChatInner() {
     }
   };
 
-  const handleSavePreferences = async (payload) => {
-    try {
-      const response = await api.patch('/api/users/me/preferences', payload);
-      setCurrentUser(response.data);
-      setAuthUser(response.data);
-      showToast('Preferences updated.', 'success');
-      return response.data;
-    } catch (error) {
-      throw new Error(getApiErrorMessage(error, 'Failed to update preferences.'));
-    }
+  const handleSettingsUpdated = (nextSettings) => {
+    const updatedUser = {
+      ...currentUserRef.current,
+      settings: nextSettings,
+      notificationSoundsEnabled: nextSettings?.notifications?.sound !== 'NONE',
+      typingIndicatorsEnabled: nextSettings?.privacy?.typingIndicators !== false
+    };
+    setCurrentUser(updatedUser);
+    setAuthUser(updatedUser);
+    if (nextSettings?.appearance?.theme) setThemePreference(nextSettings.appearance.theme);
   };
 
   const handleDeleteAccount = async () => {
@@ -933,9 +1037,57 @@ function NeosisChatInner() {
         contact.email === activeChat ? { ...contact, ...response.data } : contact
       ))));
       setShowMoreMenu(false);
-      showToast(field === 'pinned' ? (value ? 'Chat pinned.' : 'Chat unpinned.') : (value ? 'Notifications muted.' : 'Notifications unmuted.'), 'success');
+      if (field === 'pinned') showToast(value ? 'Chat pinned.' : 'Chat unpinned.', 'success');
+      else if (field === 'muteDuration') showToast(value === 'OFF' ? 'Notifications unmuted.' : 'Mute schedule updated.', 'success');
+      else if (field === 'disappearingMessagesSeconds') showToast(value ? 'Disappearing messages enabled.' : 'Disappearing messages disabled.', 'success');
+      else showToast('Conversation settings updated.', 'success');
     } catch (error) {
       showToast(getApiErrorMessage(error, 'Failed to update conversation settings.'), 'error');
+    }
+  };
+
+  const exportActiveChat = async () => {
+    if (!activeChat) return;
+    try {
+      const response = await api.get(`/api/messages/export/${encodeURIComponent(activeChat)}`, { responseType: 'blob', timeout: 60_000 });
+      const url = URL.createObjectURL(response.data);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `neosis-chat-${activeChat.replace(/[^a-z0-9]+/gi, '-')}.txt`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      showToast('Chat export created.', 'success');
+    } catch (error) {
+      showToast(getApiErrorMessage(error, 'Failed to export this chat.'), 'error');
+    }
+  };
+
+  const confirmBlockContact = () => {
+    if (!activeChat) return;
+    const contactEmail = activeChat;
+    setShowContactInfo(false);
+    setConfirmDialog({
+      title: 'Block this user?',
+      description: 'Messages, files, requests, typing indicators, and calls will be blocked in both directions until you unblock them from Settings.',
+      confirmLabel: 'Block user',
+      danger: true,
+      action: async () => {
+        await api.post(`/api/safety/blocked/${encodeURIComponent(contactEmail)}`, {});
+        setFriends((previous) => previous.filter((contact) => contact.email !== contactEmail));
+        setActiveChat(null);
+        setMessages([]);
+        showToast('User blocked.', 'success');
+      }
+    });
+  };
+
+  const reportActiveContact = async ({ category, details }) => {
+    if (!activeChat) return;
+    try {
+      await api.post('/api/safety/reports', { reportedEmail: activeChat, category, details });
+      showToast('Report submitted for review.', 'success');
+    } catch (error) {
+      throw new Error(getApiErrorMessage(error, 'Failed to submit the report.'));
     }
   };
 
@@ -990,10 +1142,12 @@ function NeosisChatInner() {
   };
 
   const displayedMessages = useMemo(() => { 
-    if (!isSearching || !searchQuery.trim()) return messages; 
+    const now = Date.now();
+    const visibleMessages = messages.filter((message) => !message.expiresAt || new Date(message.expiresAt).getTime() > now);
+    if (!isSearching || !searchQuery.trim()) return visibleMessages;
     const lowerQuery = searchQuery.toLowerCase();
-    return messages.filter(m => m.content && m.content.toLowerCase().includes(lowerQuery)); 
-  }, [messages, isSearching, searchQuery]);
+    return visibleMessages.filter(m => m.content && m.content.toLowerCase().includes(lowerQuery));
+  }, [messages, isSearching, searchQuery, expiryTick]);
 
   if (!currentUser) {
     return (
@@ -1058,7 +1212,7 @@ function NeosisChatInner() {
   const getToastBg = (type) => {
     if (type === 'error') return 'bg-rose-500 text-white';
     if (type === 'info') return 'bg-[#151817] border border-[#323d38] text-white';
-    return 'bg-[#0fa384] text-white';
+    return 'neosis-accent-bg text-white';
   };
 
   return (
@@ -1067,15 +1221,27 @@ function NeosisChatInner() {
         open={showSettingsModal}
         initialTab={settingsInitialTab}
         user={currentUser}
-        isDarkMode={isDarkMode}
         onClose={() => setShowSettingsModal(false)}
-        onToggleTheme={() => setIsDarkMode((value) => !value)}
         onSaveProfile={handleSaveProfile}
-        onSavePreferences={handleSavePreferences}
+        onSettingsUpdated={handleSettingsUpdated}
         onLogout={handleLogout}
         onDeleteAccount={handleDeleteAccount}
+        onChatsCleared={() => { setMessages([]); setUnreadCounts({}); fetchSidebarData(); }}
       />
-      <ContactInfoModal open={showContactInfo} contact={activeContact} onClose={() => setShowContactInfo(false)} />
+      <ContactInfoModal
+        open={showContactInfo}
+        contact={activeContact}
+        messageCount={messages.length}
+        mediaCount={messages.filter((message) => message.messageType !== 'TEXT').length}
+        onClose={() => setShowContactInfo(false)}
+        onMute={(duration) => updateConversationPreference('muteDuration', duration)}
+        onDisappearing={(seconds) => updateConversationPreference('disappearingMessagesSeconds', seconds)}
+        onSearch={() => { setShowContactInfo(false); setIsSearching(true); setSearchQuery(''); }}
+        onExport={exportActiveChat}
+        onClear={() => { setShowContactInfo(false); confirmClearConversation(); }}
+        onBlock={confirmBlockContact}
+        onReport={reportActiveContact}
+      />
       <ConfirmDialog
         open={Boolean(confirmDialog)}
         title={confirmDialog?.title}
@@ -1131,7 +1297,7 @@ function NeosisChatInner() {
               <div className="p-8 bg-gray-50 dark:bg-[#151817] mt-4 border-t border-gray-100 dark:border-[#232a28] flex flex-col gap-3">
                 <motion.button 
                   whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.95 }} onClick={handleAcceptTerms}
-                  className="w-full py-3.5 bg-[#0fa384] text-white font-bold rounded-xl hover:bg-[#0ba082] transition-colors shadow-lg shadow-[#0fa384]/20"
+                  className="neosis-accent-bg w-full py-3.5 text-white font-bold rounded-xl transition-all shadow-lg shadow-[#0fa384]/20"
                 >
                   I Accept & Agree
                 </motion.button>
@@ -1151,7 +1317,7 @@ function NeosisChatInner() {
                 <p className="text-gray-400 mb-12">{incomingCallData?.isVideo ? 'Incoming Video Call...' : 'Incoming Audio Call...'}</p>
                 <div className="flex gap-8">
                   <motion.button aria-label="Reject Call" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={handleRejectCall} className="w-16 h-16 bg-rose-500 rounded-full flex items-center justify-center shadow-lg shadow-rose-500/30 text-white"><PhoneOff size={28} /></motion.button>
-                  <motion.button aria-label="Accept Call" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={handleAcceptCall} className="w-16 h-16 bg-[#0fa384] rounded-full flex items-center justify-center shadow-lg shadow-[#0fa384]/30 text-white"><PhoneCall size={28} /></motion.button>
+                  <motion.button aria-label="Accept Call" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={handleAcceptCall} className="neosis-accent-bg w-16 h-16 rounded-full flex items-center justify-center shadow-lg shadow-[#0fa384]/30 text-white"><PhoneCall size={28} /></motion.button>
                 </div>
               </div>
             ) : (
@@ -1216,7 +1382,7 @@ function NeosisChatInner() {
                               <div className="min-w-0 flex-1"><div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{formatName(req.senderEmail)}</div><div className="text-[11px] text-gray-400 truncate">{req.senderEmail}</div></div>
                               <div className="flex gap-2">
                                 <motion.button aria-label="Reject Request" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => handleRejectRequest(req.id)} className="bg-gray-100 dark:bg-[#232a28] text-gray-500 dark:text-gray-300 p-2 rounded-lg hover:text-rose-500 transition-colors"><X size={16}/></motion.button>
-                                <motion.button aria-label="Accept Request" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => handleAcceptRequest(req.id)} className="bg-[#0fa384] text-white p-2 rounded-lg hover:bg-[#0ba082] transition-colors"><Check size={16}/></motion.button>
+                                <motion.button aria-label="Accept Request" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => handleAcceptRequest(req.id)} className="neosis-accent-bg text-white p-2 rounded-lg transition-all"><Check size={16}/></motion.button>
                               </div>
                             </div>
                           ))}
@@ -1251,7 +1417,7 @@ function NeosisChatInner() {
           <div className="px-4 py-4 border-b border-gray-200 dark:border-[#232a28]">
             <form onSubmit={handleSendRequest} className="relative flex items-center">
               <Search size={18} className="absolute left-3 text-gray-400 dark:text-[#0fa384]" />
-              <input type="email" value={addEmailInput} onChange={(e) => setAddEmailInput(e.target.value)} placeholder="Add contact by email..." className="w-full bg-white dark:bg-[#111313] text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 rounded-lg pl-10 pr-10 py-2.5 text-sm outline-none focus:border-[#0fa384] transition-colors border border-gray-300 dark:border-[#323d38] shadow-sm dark:shadow-none" required />
+              <input type="email" value={addEmailInput} onChange={(e) => setAddEmailInput(e.target.value)} placeholder="Add contact by email..." className="neosis-accent-focus w-full bg-white dark:bg-[#111313] text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 rounded-lg pl-10 pr-10 py-2.5 text-sm outline-none transition-colors border border-gray-300 dark:border-[#323d38] shadow-sm dark:shadow-none" required />
               <button aria-label="Add Contact" type="submit" className="absolute right-2 text-gray-400 dark:text-[#0fa384] p-1 hover:bg-gray-100 dark:hover:bg-[#232a28] rounded-md transition-colors"><UserPlus size={18}/></button>
             </form>
           </div>
@@ -1263,8 +1429,8 @@ function NeosisChatInner() {
               const isActive = activeChat === email;
               const unread = Number(unreadCounts[email] || friend.unreadCount || 0);
               return (
-                <motion.div variants={itemVariants} key={email} onClick={() => handleOpenChat(email)} className={`relative flex items-center gap-3.5 p-4 cursor-pointer transition-all duration-150 ${isActive ? 'bg-gray-100 dark:bg-[#1f2422]' : 'hover:bg-gray-50 dark:hover:bg-[#151817]'}`}>
-                  {isActive && <motion.div layoutId="activeIndicator" className="absolute left-0 top-0 bottom-0 w-1 bg-[#0fa384]" transition={{ type: "spring", stiffness: 300, damping: 30 }} />}
+                <motion.div variants={itemVariants} key={email} onClick={() => handleOpenChat(email)} className={`neosis-contact-row relative flex items-center gap-3.5 p-4 cursor-pointer transition-all duration-150 ${isActive ? 'bg-gray-100 dark:bg-[#1f2422]' : 'hover:bg-gray-50 dark:hover:bg-[#151817]'}`}>
+                  {isActive && <motion.div layoutId="activeIndicator" className="neosis-accent-bg absolute left-0 top-0 bottom-0 w-1" transition={{ type: "spring", stiffness: 300, damping: 30 }} />}
                   <div className="relative">
                     <div className={`w-12 h-12 bg-gradient-to-br ${getAvatarGradient(fName)} rounded-full flex items-center justify-center text-white font-bold text-lg`}>{fName.charAt(0).toUpperCase()}</div>
                   </div>
@@ -1295,7 +1461,7 @@ function NeosisChatInner() {
           <button type="button" onClick={() => openSettings('account')} className="p-4 border-t border-gray-200 dark:border-[#232a28] flex items-center gap-3 text-left hover:bg-gray-100 dark:hover:bg-[#151817] transition-colors">
             <div className={`w-10 h-10 rounded-full bg-gradient-to-br ${getAvatarGradient(currentUser.name || currentUser.email)} flex items-center justify-center text-white font-bold`}>{(currentUser.name || currentUser.email || '?').charAt(0).toUpperCase()}</div>
             <div className="min-w-0 flex-1"><div className="text-sm font-semibold text-gray-900 dark:text-white truncate">{currentUser.name || formatName(currentUser.email)}</div><div className="text-xs text-gray-500 dark:text-gray-400 truncate">{currentUser.statusMessage || 'Available on Neosis'}</div></div>
-            <span className={`w-2.5 h-2.5 rounded-full ${isRealtimeConnected ? 'bg-[#0fa384]' : 'bg-amber-500'}`} title={isRealtimeConnected ? 'Realtime connected' : 'Reconnecting'} />
+            <span className={`w-2.5 h-2.5 rounded-full ${isRealtimeConnected ? 'neosis-accent-bg' : 'bg-amber-500'}`} title={isRealtimeConnected ? 'Realtime connected' : 'Reconnecting'} />
           </button>
         </div>
 
@@ -1316,7 +1482,7 @@ function NeosisChatInner() {
                   </button>
                   <button type="button" onClick={() => setShowContactInfo(true)} className="text-left min-w-0">
                     <div className="font-bold text-gray-900 dark:text-white text-[16px] truncate">{getContactName(activeContact || activeChat)}</div>
-                    <div className={`text-[12px] font-medium flex items-center gap-1.5 mt-0.5 ${isRealtimeConnected ? 'text-[#0fa384]' : 'text-amber-500'}`}>{isRemoteTyping ? <span className="italic animate-pulse">typing...</span> : (isRealtimeConnected ? (activeContact?.statusMessage || 'Available on Neosis') : 'Reconnecting…')}</div>
+                    <div className={`text-[12px] font-medium flex items-center gap-1.5 mt-0.5 ${isRealtimeConnected ? 'neosis-accent-text' : 'text-amber-500'}`}>{isRemoteTyping ? <span className="italic animate-pulse">typing...</span> : (!isRealtimeConnected ? 'Reconnecting…' : (activeContact?.online ? 'Online now' : (activeContact?.lastSeenAt ? `Last seen ${new Date(activeContact.lastSeenAt).toLocaleString()}` : (activeContact?.statusMessage || 'Presence hidden'))))}</div>
                   </button>
                 </div>
 
@@ -1373,15 +1539,18 @@ function NeosisChatInner() {
                       const rawContent = msg.content;
                       const messageKey = msg.id || msg.localId || `${index}-${msg.timestamp}`;
                       const isPending = isMe && !msg.id; 
+                      const imageAllowed = isMe || currentUser?.settings?.media?.autoDownloadImages !== false || revealedMedia.has(messageKey);
+                      const videoAllowed = isMe || currentUser?.settings?.media?.autoDownloadVideos === true || revealedMedia.has(messageKey);
+                      const safeLink = currentUser?.settings?.media?.linkPreviews === false ? null : firstSafeLink(rawContent);
                       
                       return (
                         <motion.div layout variants={messageVariants} initial="hidden" animate="show" key={messageKey} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
                           <div className={`flex flex-col max-w-[85%] md:max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
-                            <div className={`px-4 py-2.5 text-[15px] leading-relaxed shadow-sm break-words ${isMe ? 'bg-[#0fa384] text-white rounded-2xl rounded-br-sm' : 'bg-gray-100 dark:bg-[#232a28] text-gray-900 dark:text-gray-200 rounded-2xl rounded-tl-sm transition-colors'}`}>
+                            <div className={`${currentUser?.settings?.appearance?.bubbleDensity === 'COMPACT' ? 'px-3 py-1.5' : 'px-4 py-2.5'} text-[15px] leading-relaxed shadow-sm break-words ${isMe ? 'neosis-accent-bg text-white rounded-2xl rounded-br-sm' : 'bg-gray-100 dark:bg-[#232a28] text-gray-900 dark:text-gray-200 rounded-2xl rounded-tl-sm transition-colors'}`}>
                               
-                              {msg.messageType === 'IMAGE' && <img src={resolveMediaUrl(msg.mediaData)} crossOrigin="use-credentials" alt="attachment" className="rounded-lg max-w-full h-auto mb-2 object-cover" />}
-                              {msg.messageType === 'VIDEO' && <video src={resolveMediaUrl(msg.mediaData)} crossOrigin="use-credentials" controls className="rounded-lg max-w-full h-auto mb-2" />}
-                              {msg.messageType === 'AUDIO' && <audio src={resolveMediaUrl(msg.mediaData)} crossOrigin="use-credentials" controls className="mb-2 max-w-[240px] h-10 rounded-full" />}
+                              {msg.messageType === 'IMAGE' && (imageAllowed ? <img src={resolveMediaUrl(msg.mediaData)} crossOrigin="use-credentials" loading="lazy" alt="attachment" className="rounded-lg max-w-full h-auto mb-2 object-cover" /> : <button type="button" onClick={() => setRevealedMedia((items) => new Set(items).add(messageKey))} className="mb-2 rounded-lg border border-white/20 px-4 py-3 text-sm font-semibold">Load image</button>)}
+                              {msg.messageType === 'VIDEO' && (videoAllowed ? <video src={resolveMediaUrl(msg.mediaData)} crossOrigin="use-credentials" preload="metadata" controls className="rounded-lg max-w-full h-auto mb-2" /> : <button type="button" onClick={() => setRevealedMedia((items) => new Set(items).add(messageKey))} className="mb-2 rounded-lg border border-white/20 px-4 py-3 text-sm font-semibold">Load video</button>)}
+                              {msg.messageType === 'AUDIO' && <audio src={resolveMediaUrl(msg.mediaData)} crossOrigin="use-credentials" preload="none" controls className="mb-2 max-w-[240px] h-10 rounded-full" />}
                               
                               {msg.messageType === 'DOCUMENT' && (
                                 <a href={resolveMediaUrl(msg.mediaData)} download={msg.mediaFilename || "Neosis_Document"} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 mb-2 p-3 bg-black/20 rounded-xl hover:bg-black/30 transition-colors text-white border border-[#323d38] cursor-pointer no-underline">
@@ -1391,9 +1560,11 @@ function NeosisChatInner() {
                               )}
 
                               {isSearching && searchQuery && rawContent ? highlightText(rawContent, searchQuery) : rawContent}
+                              {safeLink && <a href={safeLink.href} target="_blank" rel="noopener noreferrer" className="mt-2 block max-w-full rounded-lg border border-black/10 bg-black/10 px-3 py-2 text-xs no-underline hover:bg-black/20"><span className="block truncate font-bold">{safeLink.hostname}</span><span className="block truncate opacity-75">{safeLink.href}</span></a>}
                             </div>
                             <span className="text-[10px] text-gray-400 dark:text-gray-500 mt-1 font-medium px-1 flex items-center gap-1 font-mono">
                               {formatMessageTime(msg)} 
+                              {msg.expiresAt && <span title={`Disappears ${new Date(msg.expiresAt).toLocaleString()}`}>· <Clock3 size={11} className="inline" /></span>}
                               {isMe && (isPending ? <Loader2 size={12} className="text-gray-300 dark:text-gray-600 animate-spin" /> : (msg.readAt ? <CheckCheck size={14} className="text-[#0fa384]" aria-label="Read" /> : <Check size={13} className="text-gray-400" aria-label="Delivered" />))}
                             </span>
                           </div>
@@ -1448,15 +1619,15 @@ function NeosisChatInner() {
                   <form onSubmit={handleSendMessage} className="flex items-end gap-3 max-w-5xl mx-auto w-full">
                     <div className="flex items-center gap-1 pb-1.5">
                       <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,.pdf,.doc,.docx,.txt,.csv,.xls,.xlsx,.ppt,.pptx" />
-                      <button type="button" onClick={() => fileInputRef.current.click()} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white dark:hover:bg-[#232a28] rounded-lg transition-colors"><Paperclip size={20}/></button>
+                      <button type="button" disabled={activeContact?.canMessage === false} onClick={() => fileInputRef.current.click()} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white dark:hover:bg-[#232a28] rounded-lg transition-colors disabled:opacity-40"><Paperclip size={20}/></button>
                       <button type="button" onClick={() => {
                         if (!showEmojiPicker && attachmentPreview) {}
                         setShowEmojiPicker(!showEmojiPicker);
                       }} className={`p-2 rounded-lg transition-colors ${showEmojiPicker ? 'text-[#0fa384] bg-[#0fa384]/10' : 'text-gray-400 hover:text-gray-900 dark:hover:text-white dark:hover:bg-[#232a28]'}`}><Smile size={20}/></button>
-                      <button type="button" onClick={startRecording} className="p-2 text-gray-400 hover:text-rose-500 dark:hover:bg-rose-500/10 rounded-lg transition-colors"><Mic size={20}/></button>
+                      <button type="button" disabled={activeContact?.canMessage === false} onClick={startRecording} className="p-2 text-gray-400 hover:text-rose-500 dark:hover:bg-rose-500/10 rounded-lg transition-colors disabled:opacity-40"><Mic size={20}/></button>
                     </div>
-                    <textarea ref={textareaRef} value={newMessage} onChange={handleInputChange} maxLength={5000} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }} placeholder={attachment ? "Add a caption..." : "Type a message..."} className="flex-1 bg-gray-50 dark:bg-[#151817] text-gray-900 dark:text-white border border-gray-300 dark:border-[#323d38] focus:border-[#0fa384] dark:focus:border-[#0fa384] rounded-xl px-4 py-3 placeholder-gray-400 dark:placeholder-gray-500 text-[15px] resize-none custom-scrollbar outline-none transition-all focus:shadow-[0_0_10px_rgba(15,163,132,0.15)]" rows="1" />
-                    <button type="submit" disabled={isSending} className={`p-3 rounded-xl shadow-lg transition-colors flex-shrink-0 mb-0.5 ${isSending ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#0fa384] hover:bg-[#0ba082] text-white'}`}>
+                    <textarea ref={textareaRef} value={newMessage} disabled={activeContact?.canMessage === false} onChange={handleInputChange} maxLength={5000} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }} placeholder={activeContact?.canMessage === false ? "This contact is not accepting messages" : (attachment ? "Add a caption..." : "Type a message...")} className="neosis-accent-focus flex-1 bg-gray-50 dark:bg-[#151817] text-gray-900 dark:text-white border border-gray-300 dark:border-[#323d38] rounded-xl px-4 py-3 placeholder-gray-400 dark:placeholder-gray-500 text-[15px] resize-none custom-scrollbar outline-none transition-all focus:shadow-[0_0_10px_rgba(15,163,132,0.15)] disabled:opacity-60" rows="1" />
+                    <button type="submit" disabled={isSending || activeContact?.canMessage === false} className={`p-3 rounded-xl shadow-lg transition-all flex-shrink-0 mb-0.5 ${isSending || activeContact?.canMessage === false ? 'bg-gray-400 cursor-not-allowed' : 'neosis-accent-bg text-white'}`}>
                       {isSending ? <Loader2 size={20} className="animate-spin text-white" /> : <Send size={20}/>}
                     </button>
                   </form>

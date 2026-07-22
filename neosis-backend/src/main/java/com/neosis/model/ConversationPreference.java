@@ -18,6 +18,8 @@ public class ConversationPreference {
     private String contactEmail;
     private boolean pinned;
     private boolean muted;
+    private LocalDateTime mutedUntil;
+    private int disappearingMessagesSeconds;
     private LocalDateTime clearedAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -43,8 +45,14 @@ public class ConversationPreference {
     public boolean isPinned() { return pinned; }
     public void setPinned(boolean pinned) { this.pinned = pinned; }
 
-    public boolean isMuted() { return muted; }
+    public boolean isMuted() { return muted && (mutedUntil == null || mutedUntil.isAfter(LocalDateTime.now())); }
     public void setMuted(boolean muted) { this.muted = muted; }
+
+    public LocalDateTime getMutedUntil() { return mutedUntil; }
+    public void setMutedUntil(LocalDateTime mutedUntil) { this.mutedUntil = mutedUntil; }
+
+    public int getDisappearingMessagesSeconds() { return disappearingMessagesSeconds; }
+    public void setDisappearingMessagesSeconds(int disappearingMessagesSeconds) { this.disappearingMessagesSeconds = disappearingMessagesSeconds; }
 
     public LocalDateTime getClearedAt() { return clearedAt; }
     public void setClearedAt(LocalDateTime clearedAt) { this.clearedAt = clearedAt; }

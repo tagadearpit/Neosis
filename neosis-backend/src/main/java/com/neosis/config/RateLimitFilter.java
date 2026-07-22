@@ -60,6 +60,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
         if ("POST".equalsIgnoreCase(method) && path.equals("/api/chat/upload")) return new Policy("chat-upload", 20);
         if ("POST".equalsIgnoreCase(method) && path.equals("/api/contacts/request")) return new Policy("contact-request", 30);
+        if ("POST".equalsIgnoreCase(method) && path.equals("/api/safety/reports")) return new Policy("abuse-report", 10);
+        if ("GET".equalsIgnoreCase(method) && path.equals("/api/data/export")) return new Policy("data-export", 5);
+        if ("DELETE".equalsIgnoreCase(method) && path.startsWith("/api/security/sessions")) return new Policy("session-revoke", 30);
         if ("POST".equalsIgnoreCase(method) && (path.equals("/api/contacts/accept") || path.equals("/api/contacts/reject"))) {
             return new Policy("contact-response", 60);
         }

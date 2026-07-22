@@ -3,6 +3,7 @@ package com.neosis.controller;
 import com.neosis.model.ChatRequest;
 import com.neosis.repository.ChatRequestRepository;
 import com.neosis.repository.UserRepository;
+import com.neosis.service.BlockService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -32,17 +33,20 @@ public class ContactController {
     private final UserRepository userRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final MongoTemplate mongoTemplate;
+    private final BlockService blockService;
 
     public ContactController(
         ChatRequestRepository requestRepository,
         UserRepository userRepository,
         SimpMessagingTemplate messagingTemplate,
-        MongoTemplate mongoTemplate
+        MongoTemplate mongoTemplate,
+        BlockService blockService
     ) {
         this.requestRepository = requestRepository;
         this.userRepository = userRepository;
         this.messagingTemplate = messagingTemplate;
         this.mongoTemplate = mongoTemplate;
+        this.blockService = blockService;
     }
 
     @PostMapping("/request")
@@ -54,6 +58,9 @@ public class ContactController {
         if (senderEmail.equals(receiver)) return ResponseEntity.badRequest().body(Map.of("error", "You cannot add yourself"));
         if (!userRepository.existsByEmail(receiver)) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "User does not exist in the Neosis network"));
+        }
+        if (blockService.isEitherBlocked(senderEmail, receiver)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "This contact request is not available"));
         }
 
         String pairKey = ChatRequest.buildPairKey(senderEmail, receiver);
@@ -74,7 +81,9 @@ public class ContactController {
     public ResponseEntity<?> getPendingRequests(OAuth2AuthenticationToken token) {
         String myEmail = authenticatedEmail(token);
         if (myEmail == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Unauthorized"));
-        return ResponseEntity.ok(requestRepository.findByReceiverEmailAndStatus(myEmail, "PENDING"));
+        return ResponseEntity.ok(requestRepository.findByReceiverEmailAndStatus(myEmail, "PENDING").stream()
+            .filter(request -> !blockService.isEitherBlocked(myEmail, request.getSenderEmail()))
+            .toList());
     }
 
     @PostMapping("/accept")
@@ -92,6 +101,10 @@ public class ContactController {
             ChatRequest.class
         );
         if (req == null) return unavailableRequest(requestId, myEmail, "accept");
+        if (blockService.isEitherBlocked(req.getSenderEmail(), req.getReceiverEmail())) {
+            requestRepository.deleteById(req.getId());
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "This contact request is no longer available"));
+        }
 
         messagingTemplate.convertAndSendToUser(req.getSenderEmail(), "/queue/notifications", Map.of("type", "REQUEST_ACCEPTED"));
         return ResponseEntity.ok(Map.of("message", "Request accepted"));

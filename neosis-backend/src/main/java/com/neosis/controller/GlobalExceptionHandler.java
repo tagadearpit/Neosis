@@ -42,6 +42,11 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(error("The requested record already exists"));
     }
 
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<?> handleInvalidArgument(IllegalArgumentException ex) {
+        return ResponseEntity.badRequest().body(error(ex.getMessage()));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<?> handleUnexpected(Exception ex) {
         log.error("Unhandled request failure", ex);

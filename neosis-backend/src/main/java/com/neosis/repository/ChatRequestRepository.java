@@ -20,6 +20,9 @@ public interface ChatRequestRepository extends MongoRepository<ChatRequest, Stri
     @Query("{ '$or': [ { 'senderEmail': ?0 }, { 'receiverEmail': ?0 } ], 'status': 'ACCEPTED' }")
     List<ChatRequest> findAllAcceptedForUser(String email);
 
+    @Query("{ '$or': [ { 'senderEmail': ?0 }, { 'receiverEmail': ?0 } ] }")
+    List<ChatRequest> findAllForUser(String email);
+
     long deleteByPairKeyAndStatus(String pairKey, String status);
 
     void deleteBySenderEmailOrReceiverEmail(String senderEmail, String receiverEmail);
