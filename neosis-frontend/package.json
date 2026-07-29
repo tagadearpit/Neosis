@@ -16,7 +16,7 @@
     "lucide-react": "1.25.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "react-router-dom": "7.18.1",
+    "react-router-dom": "7.18.2",
     "sockjs-client": "1.6.1",
     "vite-plugin-pwa": "1.2.0"
   },
