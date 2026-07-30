@@ -888,6 +888,30 @@ Pull requests should explain behavior changes, security impact, migration requir
 - [Deployment guide](neosis-github-wiki/Deployment-Guide.md)
 - [Troubleshooting](neosis-github-wiki/Troubleshooting.md)
 - [Production risks and roadmap](neosis-github-wiki/Production-Risks-and-Roadmap.md)
+- [Production Audit Report](PRODUCTION_AUDIT.md)
+
+---
+
+## 🗺️ Grounded Feature Roadmap & Prioritized Development Order
+
+Neosis has a comprehensive feature expansion roadmap grounded against its active codebase and MongoDB schemas:
+
+### Tier 1 — Finish Stubbed UI Placeholders
+- **Profile Photo Upload**: Wire disabled privacy-tab selector to `/api/chat/upload/avatar` and add `profilePhotoUrl` to `User`.
+- **Group Chats**: Add `Group` / `Room` schema, `conversationId` to messages, group STOMP routing, and admin controls.
+
+### Tier 2 — High-Value Core Messaging (Recommended Starting Order)
+1. ⭐ **Reply to Messages**: Quote preview above bubbles, swipe-to-reply, click-to-scroll (`replyToMessageId` in `ChatMessage`).
+2. ⭐ **Message Reactions**: ❤️ double-click, emoji picker popover, multiple reactions, live WS broadcast (`reactions` map in `ChatMessage`).
+3. ⭐ **Edit & Delete Messages**: 15-minute edit window with "Edited" label, "Delete for everyone", and WS reconciliation.
+4. ⭐ **Search Within Chats**: Search images, files, links, dates, and text with keyword highlighting.
+5. ⭐ **Media Gallery & Improved Viewer**: Fullscreen lightbox with zoom, swipe, download, and categorized chat media tabs.
+6. ⭐ **Mentions & Group Enhancements**: `@username` tags, polls, events, and threaded replies.
+7. ⭐ **AI Assistance**: AI chat summary, smart replies, instant translation, tone rewrite, and meeting notes.
+8. ⭐ **End-to-End Encryption / 2FA**: Client-side key generation and multi-device authentication.
+9. ⭐ **Performance & Polish**: Virtualized message lists, offline send queue with IndexedDB, push notifications, and custom theming.
+
+For complete architectural details and residual risk mitigations, see [`PRODUCTION_AUDIT.md`](file:///d:/CandyRobot/Neosis-main/PRODUCTION_AUDIT.md) and [`neosis-github-wiki/Production-Risks-and-Roadmap.md`](file:///d:/CandyRobot/Neosis-main/neosis-github-wiki/Production-Risks-and-Roadmap.md).
 
 ---
 
