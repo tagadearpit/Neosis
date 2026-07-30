@@ -1,6 +1,6 @@
 import React from 'react';
 import { AlertTriangle, Loader2, X } from 'lucide-react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 
 export default function ConfirmDialog({
   open,
@@ -13,22 +13,26 @@ export default function ConfirmDialog({
   onConfirm,
   onClose
 }) {
+  const shouldReduceMotion = useReducedMotion();
+  const noMotion = { duration: 0 };
   return (
     <AnimatePresence>
       {open && (
         <motion.div
-          initial={{ opacity: 0 }}
+          initial={shouldReduceMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
+          transition={shouldReduceMotion ? noMotion : undefined}
           className="absolute inset-0 z-[400] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="confirm-dialog-title"
         >
           <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 16 }}
+            initial={shouldReduceMotion ? false : { opacity: 0, scale: 0.95, y: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 16 }}
+            transition={shouldReduceMotion ? noMotion : undefined}
             className="w-full max-w-md rounded-2xl border border-gray-200 dark:border-[#323d38] bg-white dark:bg-[#1a1f1d] shadow-2xl overflow-hidden"
           >
             <div className="p-6 flex gap-4">

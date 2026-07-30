@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/React-18.2-61DAFB?logo=react&logoColor=white" alt="React 18.2" />
+  <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white" alt="React 19" />
   <img src="https://img.shields.io/badge/Vite-7.3-646CFF?logo=vite&logoColor=white" alt="Vite 7.3" />
   <img src="https://img.shields.io/badge/Spring_Boot-3.5-6DB33F?logo=springboot&logoColor=white" alt="Spring Boot 3.5" />
   <img src="https://img.shields.io/badge/Java-17-ED8B00?logo=openjdk&logoColor=white" alt="Java 17" />
@@ -891,6 +891,34 @@ Pull requests should explain behavior changes, security impact, migration requir
 
 ---
 
+## 🔄 Recent Changes
+
+### Frontend Bug & Animation Audit (July 2026)
+
+A comprehensive frontend audit identified and fixed the following issues:
+
+#### 🔴 Critical
+- **Terms & Conditions gate (`hasAcceptedTC`) now syncs with the backend** — Previously, the T&C modal would re-appear on every page refresh even for users who had already accepted terms, blocking WebSocket connection, sidebar loading, and presence heartbeat until the user clicked "Accept" again. The state is now initialized from `authUser.termsAccepted` and kept in sync.
+
+#### 🟠 Animations & Performance
+- **Message bubbles optimized** — Removed expensive `rotateX` and `filter: blur()` CSS properties from message entrance animations. Removed unnecessary `layout` prop that was causing FLIP recalculations across all message siblings. Added proper `exit` variant for smooth message removal.
+- **History load no longer replays 100 entrance animations** — A `hasRenderedHistoryRef` pattern ensures only newly-appended messages animate in; the initial history batch renders without entrance animation.
+- **Contact list exit animation** — Wrapped contact rows in `<AnimatePresence>` with a slide-out `exit` variant so blocking/removing a contact animates smoothly.
+- **Dropdown transform-origin** — Notification, settings, and more-menu dropdowns now scale from `top right` (their trigger button) instead of center.
+- **Online presence pulse ring wired up** — The existing `.chat-pulse-avatar` CSS class (previously orphaned) is now applied to contact avatars and chat header avatars when the contact is online.
+
+#### 🟡 Code Quality
+- **Dead CSS removed** — Orphaned `@keyframes shimmer` and `@keyframes blink` deleted. The `.chat-pulse-avatar` keyframe was fixed (was referencing nonexistent `ping` animation).
+- **Dead emoji button code removed** — Empty `if (!showEmojiPicker && attachmentPreview) {}` no-op block cleaned up.
+- **Shared AudioContext** — `playNotificationTone` now reuses a single `AudioContext` instance instead of creating (and leaking) a new one per notification.
+- **Call failed toast** — `onconnectionstatechange` `'failed'` branch now shows a user-facing toast ("Call could not be connected.") before cleaning up, instead of silently snapping back to idle.
+
+#### ♿ Accessibility
+- **`useReducedMotion()` support** — All Framer Motion components (`NeosisChat`, `SettingsModal`, `ConfirmDialog`, `ContactInfoModal`) now respect the OS-level `prefers-reduced-motion` setting. Previously only the plain-CSS loading screen honored it.
+
+
+---
+
 ## 📄 License
 
 This project is distributed under the **MIT License**. See [`LICENSE`](LICENSE) for the complete license text.
@@ -898,6 +926,7 @@ This project is distributed under the **MIT License**. See [`LICENSE`](LICENSE) 
 ---
 
 ## 👨‍💻 Maintainer
+
 
 **Arpit Tagade**  
 Full-Stack AI Engineer and hardware developer

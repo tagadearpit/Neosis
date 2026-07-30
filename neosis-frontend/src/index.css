@@ -49,7 +49,7 @@
   box-shadow: 0 0 35px rgba(15, 163, 132, 0.04), inset 0 1px 1px rgba(255, 255, 255, 0.03);
 }
 
-@keyframes shimmer { 100% { transform: translateX(100%); } }
+
 
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visible {
   outline: 2px solid var(--neosis-accent, #0fa384);
@@ -68,12 +68,15 @@ button.neosis-accent-bg:hover, a.neosis-accent-bg:hover { filter: brightness(0.9
 
 html[data-compact="true"] .neosis-contact-row { padding-top: 0.5rem; padding-bottom: 0.5rem; }
 
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+@keyframes pulse-ring {
+  0% { transform: scale(1); opacity: 0.7; }
+  70% { transform: scale(1.45); opacity: 0; }
+  100% { transform: scale(1.45); opacity: 0; }
 }
+.chat-pulse-avatar { position: relative; }
 .chat-pulse-avatar::after {
-  content: ''; position: absolute; width: 100%; height: 100%; border-radius: 50%;
-  border: 1px solid #0fa384; opacity: 0.8;
-  animation: ping 2s infinite cubic-bezier(0, 0, 0.2, 1);
+  content: ''; position: absolute; inset: 0; border-radius: 50%;
+  border: 2px solid var(--neosis-accent, #0fa384);
+  animation: pulse-ring 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+  pointer-events: none;
 }

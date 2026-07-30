@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { Ban, BellOff, Clock3, Download, Flag, Mail, Search, ShieldCheck, Trash2, X } from 'lucide-react';
 
 const selectClass = 'neosis-accent-focus w-full rounded-lg border border-gray-300 dark:border-[#323d38] bg-white dark:bg-[#111313] px-3 py-2.5 text-sm text-gray-900 dark:text-white outline-none';
@@ -11,6 +11,8 @@ export default function ContactInfoModal({
   const [reportOpen, setReportOpen] = useState(false);
   const [reportCategory, setReportCategory] = useState('SPAM');
   const [reportDetails, setReportDetails] = useState('');
+  const shouldReduceMotion = useReducedMotion();
+  const noMotion = { duration: 0 };
 
   useEffect(() => {
     if (!open) return;
@@ -30,8 +32,8 @@ export default function ContactInfoModal({
   return (
     <AnimatePresence>
       {open && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-[320] flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="chat-info-title">
-          <motion.div initial={{ opacity: 0, scale: 0.97, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.97, y: 12 }} className="max-h-[94vh] w-full max-w-lg overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-2xl custom-scrollbar dark:border-[#323d38] dark:bg-[#1a1f1d]">
+        <motion.div initial={shouldReduceMotion ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={shouldReduceMotion ? noMotion : undefined} className="absolute inset-0 z-[320] flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="chat-info-title">
+          <motion.div initial={shouldReduceMotion ? false : { opacity: 0, scale: 0.97, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.97, y: 12 }} transition={shouldReduceMotion ? noMotion : undefined} className="max-h-[94vh] w-full max-w-lg overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-2xl custom-scrollbar dark:border-[#323d38] dark:bg-[#1a1f1d]">
             <header className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-5 py-4 dark:border-[#232a28] dark:bg-[#1a1f1d]"><h2 id="chat-info-title" className="font-display text-lg font-bold text-gray-900 dark:text-white">Chat info</h2><button type="button" onClick={onClose} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-[#232a28] dark:hover:text-white" aria-label="Close chat info"><X size={19} /></button></header>
 
             <div className="p-5">

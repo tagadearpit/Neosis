@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
   Ban, Bell, CheckCircle2, Database, Download, ExternalLink, HardDrive,
   History, KeyRound, Loader2, LogOut, MessageCircle,
@@ -105,6 +105,8 @@ export default function SettingsModal({
   const [busyAction, setBusyAction] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const shouldReduceMotion = useReducedMotion();
+  const noMotion = { duration: 0 };
 
   useEffect(() => {
     if (!open || !user) return;
@@ -198,8 +200,8 @@ export default function SettingsModal({
   return (
     <AnimatePresence>
       {open && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-[350] flex items-center justify-center bg-black/70 p-2 backdrop-blur-md md:p-5" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-          <motion.div initial={{ opacity: 0, scale: 0.97, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.97, y: 12 }} className="flex max-h-[96vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-2xl dark:border-[#323d38] dark:bg-[#1a1f1d]">
+        <motion.div initial={shouldReduceMotion ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={shouldReduceMotion ? noMotion : undefined} className="absolute inset-0 z-[350] flex items-center justify-center bg-black/70 p-2 backdrop-blur-md md:p-5" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+          <motion.div initial={shouldReduceMotion ? false : { opacity: 0, scale: 0.97, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.97, y: 12 }} transition={shouldReduceMotion ? noMotion : undefined} className="flex max-h-[96vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-2xl dark:border-[#323d38] dark:bg-[#1a1f1d]">
             <header className="flex items-center justify-between border-b border-gray-200 px-4 py-4 dark:border-[#232a28] md:px-6">
               <div><h2 id="settings-title" className="font-display text-xl font-bold text-gray-900 dark:text-white">Settings</h2><p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Privacy, security, chats, and account controls.</p></div>
               <button type="button" onClick={onClose} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-[#232a28] dark:hover:text-white" aria-label="Close settings"><X size={20} /></button>

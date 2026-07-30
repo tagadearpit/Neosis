@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, useContext, Component } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { 
   MessageSquare, UserPlus, Bell, Send, Check, CheckCheck, ArrowLeft, Moon, Sun, 
   Loader2, Phone, Video, Search, MoreVertical, Paperclip, Smile, Mic, ShieldCheck,
@@ -97,11 +97,23 @@ const sortContacts = (contacts) => [...contacts].sort((a, b) => {
   return getContactName(a).localeCompare(getContactName(b), undefined, { sensitivity: 'base' });
 });
 
+let sharedAudioContext = null;
+const getAudioContext = () => {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return null;
+  if (!sharedAudioContext || sharedAudioContext.state === 'closed') {
+    sharedAudioContext = new AudioContextClass();
+  }
+  if (sharedAudioContext.state === 'suspended') {
+    sharedAudioContext.resume().catch(() => {});
+  }
+  return sharedAudioContext;
+};
+
 const playNotificationTone = (sound = 'CHIME') => {
   try {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) return;
-    const context = new AudioContextClass();
+    const context = getAudioContext();
+    if (!context) return;
     const oscillator = context.createOscillator();
     const gain = context.createGain();
     const soft = sound === 'SOFT';
@@ -114,7 +126,6 @@ const playNotificationTone = (sound = 'CHIME') => {
     gain.connect(context.destination);
     oscillator.start();
     oscillator.stop(context.currentTime + (soft ? 0.21 : 0.13));
-    oscillator.addEventListener('ended', () => context.close());
   } catch {
     // Browsers can block programmatic audio before user interaction.
   }
@@ -158,8 +169,8 @@ const rtcConfiguration = {
 };
 
 const listVariants = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.05 } } };
-const itemVariants = { hidden: { opacity: 0, x: -20 }, show: { opacity: 1, x: 0, transition: { type: "spring", stiffness: 300, damping: 24 } } };
-const messageVariants = { hidden: { opacity: 0, y: 20, scale: 0.95, rotateX: -15, filter: "blur(5px)" }, show: { opacity: 1, y: 0, scale: 1, rotateX: 0, filter: "blur(0px)", transition: { type: "spring", stiffness: 280, damping: 22 } } };
+const itemVariants = { hidden: { opacity: 0, x: -20 }, show: { opacity: 1, x: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }, exit: { opacity: 0, x: -20, transition: { duration: 0.2 } } };
+const messageVariants = { hidden: { opacity: 0, y: 12, scale: 0.98 }, show: { opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 380, damping: 30 } }, exit: { opacity: 0, scale: 0.96, transition: { duration: 0.15 } } };
 const pageTransition = { hidden: { opacity: 0, scale: 0.98 }, show: { opacity: 1, scale: 1, transition: { duration: 0.5, ease: "easeOut" } } };
 
 function NeosisChatInner() {
@@ -185,7 +196,7 @@ function NeosisChatInner() {
   const [isDarkMode, setIsDarkMode] = useState(() => themeIsDark(localStorage.getItem('themePreference') || 'SYSTEM'));
   const [expiryTick, setExpiryTick] = useState(0);
   
-  const [hasAcceptedTC, setHasAcceptedTC] = useState(false);
+  const [hasAcceptedTC, setHasAcceptedTC] = useState(() => Boolean(authUser?.termsAccepted));
 
   const [isRemoteTyping, setIsRemoteTyping] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -229,6 +240,9 @@ function NeosisChatInner() {
   const historyAbortRef = useRef(null);
   const realtimeErrorShownRef = useRef(false);
   const loginNoticeShownRef = useRef(false);
+  const hasRenderedHistoryRef = useRef(new Set());
+
+  const shouldReduceMotion = useReducedMotion();
 
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
@@ -250,7 +264,10 @@ function NeosisChatInner() {
   useEffect(() => { activeChatRef.current = activeChat; }, [activeChat]);
   useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
   useEffect(() => {
-    if (authUser) setCurrentUser(authUser);
+    if (authUser) {
+      setCurrentUser(authUser);
+      setHasAcceptedTC(Boolean(authUser.termsAccepted));
+    }
   }, [authUser]);
   useEffect(() => {
     const savedTheme = currentUser?.settings?.appearance?.theme;
@@ -616,8 +633,12 @@ function NeosisChatInner() {
       if (event.candidate) sendWebRTCSignal({ type: 'ice-candidate', candidate: event.candidate, recipientEmail });
     };
     connection.onconnectionstatechange = () => {
-      if (['failed', 'closed'].includes(connection.connectionState)) cleanupCallResources();
-      if (connection.connectionState === 'disconnected') {
+      if (connection.connectionState === 'failed') {
+        showToast('Call could not be connected.', 'error');
+        cleanupCallResources();
+      } else if (connection.connectionState === 'closed') {
+        cleanupCallResources();
+      } else if (connection.connectionState === 'disconnected') {
         showToast('Call connection interrupted.', 'info');
       }
     };
@@ -1373,7 +1394,7 @@ function NeosisChatInner() {
                 </motion.button>
                 <AnimatePresence>
                   {showNotifications && (
-                    <motion.div initial={{ opacity: 0, y: 10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.95 }} transition={{ type: "spring", stiffness: 300, damping: 25 }} className="absolute top-12 right-0 w-80 bg-white dark:bg-[#151817] rounded-xl shadow-2xl border border-gray-200 dark:border-[#323d38] z-50 overflow-hidden">
+                    <motion.div initial={{ opacity: 0, y: 10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.95 }} transition={{ type: "spring", stiffness: 300, damping: 25 }} style={{ transformOrigin: 'top right' }} className="absolute top-12 right-0 w-80 bg-white dark:bg-[#151817] rounded-xl shadow-2xl border border-gray-200 dark:border-[#323d38] z-50 overflow-hidden">
                       <div className="p-4 border-b border-gray-200 dark:border-[#232a28] text-sm font-bold flex justify-between items-center text-gray-900 dark:text-white"><span>Friend Requests</span><span className="bg-[#0fa384]/10 text-[#0fa384] text-xs px-2.5 py-1 rounded-full">{pendingRequests.length}</span></div>
                       {pendingRequests.length === 0 ? <div className="p-8 text-sm text-gray-500 dark:text-gray-400 text-center">No pending requests</div> : (
                         <div className="max-h-64 overflow-y-auto custom-scrollbar">
@@ -1399,7 +1420,7 @@ function NeosisChatInner() {
                 </motion.button>
                 <AnimatePresence>
                   {showSettingsMenu && (
-                    <motion.div initial={{ opacity: 0, y: 10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.95 }} transition={{ type: "spring", stiffness: 300, damping: 25 }} className="absolute right-0 top-12 w-56 bg-white dark:bg-[#151817] rounded-xl shadow-2xl border border-gray-200 dark:border-[#323d38] z-50 overflow-hidden">
+                    <motion.div initial={{ opacity: 0, y: 10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.95 }} transition={{ type: "spring", stiffness: 300, damping: 25 }} style={{ transformOrigin: 'top right' }} className="absolute right-0 top-12 w-56 bg-white dark:bg-[#151817] rounded-xl shadow-2xl border border-gray-200 dark:border-[#323d38] z-50 overflow-hidden">
                       <div className="p-4 border-b border-gray-200 dark:border-[#232a28] text-sm font-bold text-gray-900 dark:text-white">Settings</div>
                       <div className="flex flex-col text-sm text-gray-700 dark:text-gray-300">
                         <button onClick={() => openSettings('account')} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-[#1a1f1d] transition w-full text-left"><UserCog size={16} /> Account</button>
@@ -1423,6 +1444,7 @@ function NeosisChatInner() {
           </div>
 
           <motion.div variants={listVariants} initial="hidden" animate="show" className="flex-1 overflow-y-auto custom-scrollbar contain-content">
+            <AnimatePresence>
             {friends.map((friend) => {
               const email = getContactEmail(friend);
               const fName = getContactName(friend);
@@ -1431,7 +1453,7 @@ function NeosisChatInner() {
               return (
                 <motion.div variants={itemVariants} key={email} onClick={() => handleOpenChat(email)} className={`neosis-contact-row relative flex items-center gap-3.5 p-4 cursor-pointer transition-all duration-150 ${isActive ? 'bg-gray-100 dark:bg-[#1f2422]' : 'hover:bg-gray-50 dark:hover:bg-[#151817]'}`}>
                   {isActive && <motion.div layoutId="activeIndicator" className="neosis-accent-bg absolute left-0 top-0 bottom-0 w-1" transition={{ type: "spring", stiffness: 300, damping: 30 }} />}
-                  <div className="relative">
+                  <div className={`relative ${friend.online ? 'chat-pulse-avatar' : ''}`}>
                     <div className={`w-12 h-12 bg-gradient-to-br ${getAvatarGradient(fName)} rounded-full flex items-center justify-center text-white font-bold text-lg`}>{fName.charAt(0).toUpperCase()}</div>
                   </div>
                   <div className="flex-1 min-w-0">
@@ -1450,6 +1472,7 @@ function NeosisChatInner() {
                 </motion.div>
               );
             })}
+            </AnimatePresence>
             {friends.length === 0 && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-10 flex flex-col items-center justify-center text-gray-500 text-center px-6">
                 <motion.div animate={{ y: [0, -10, 0] }} transition={{ repeat: Infinity, duration: 3, ease: "easeInOut" }} className="w-16 h-16 bg-white dark:bg-[#151817] shadow-sm dark:shadow-none rounded-2xl flex items-center justify-center mb-4 transition-colors"><UserPlus size={24} className="text-gray-400 dark:text-[#0fa384]" /></motion.div>
@@ -1477,7 +1500,7 @@ function NeosisChatInner() {
               <div className="px-6 py-4 bg-white dark:bg-[#1a1f1d] border-b border-gray-200 dark:border-[#232a28] flex items-center justify-between z-20 transition-colors">
                 <div className="flex items-center gap-4">
                   <motion.button aria-label="Go Back" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => setActiveChat(null)} className="md:hidden text-gray-400 dark:hover:text-white transition"><ArrowLeft size={24} /></motion.button>
-                  <button type="button" onClick={() => setShowContactInfo(true)} className="relative" aria-label="Open contact information">
+                  <button type="button" onClick={() => setShowContactInfo(true)} className={`relative ${activeContact?.online ? 'chat-pulse-avatar' : ''}`} aria-label="Open contact information">
                     <div className={`w-11 h-11 bg-gradient-to-br ${getAvatarGradient(getContactName(activeContact || activeChat))} rounded-full flex items-center justify-center text-white font-bold text-lg shadow-sm`}>{getContactName(activeContact || activeChat).charAt(0).toUpperCase()}</div>
                   </button>
                   <button type="button" onClick={() => setShowContactInfo(true)} className="text-left min-w-0">
@@ -1495,7 +1518,7 @@ function NeosisChatInner() {
                     <motion.button aria-label="Menu" whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => setShowMoreMenu(!showMoreMenu)} className="p-2 rounded-lg hover:text-gray-900 hover:bg-gray-100 dark:hover:text-white dark:hover:bg-[#202523] transition-colors"><MoreVertical size={20}/></motion.button>
                     <AnimatePresence>
                       {showMoreMenu && (
-                        <motion.div initial={{ opacity: 0, y: 10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.95 }} transition={{ type: "spring", stiffness: 300, damping: 25 }} className="absolute right-0 top-10 w-48 bg-white dark:bg-[#151817] rounded-xl shadow-xl border border-gray-200 dark:border-[#323d38] overflow-hidden z-50">
+                        <motion.div initial={{ opacity: 0, y: 10, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.95 }} transition={{ type: "spring", stiffness: 300, damping: 25 }} style={{ transformOrigin: 'top right' }} className="absolute right-0 top-10 w-48 bg-white dark:bg-[#151817] rounded-xl shadow-xl border border-gray-200 dark:border-[#323d38] overflow-hidden z-50">
                           <div className="flex flex-col text-sm text-gray-700 dark:text-gray-200">
                             <button onClick={() => { setShowMoreMenu(false); setShowContactInfo(true); }} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-[#1a1f1d] transition w-full text-left"><User size={16} /> Contact info</button>
                             <button onClick={() => updateConversationPreference('pinned', !activeContact?.pinned)} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-[#1a1f1d] transition w-full text-left"><Pin size={16} /> {activeContact?.pinned ? 'Unpin chat' : 'Pin chat'}</button>
@@ -1544,7 +1567,7 @@ function NeosisChatInner() {
                       const safeLink = currentUser?.settings?.media?.linkPreviews === false ? null : firstSafeLink(rawContent);
                       
                       return (
-                        <motion.div layout variants={messageVariants} initial="hidden" animate="show" key={messageKey} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                        <motion.div variants={messageVariants} initial={shouldReduceMotion ? false : (hasRenderedHistoryRef.current.has(activeChat) ? 'hidden' : false)} animate="show" exit="exit" key={messageKey} onAnimationComplete={() => { if (!hasRenderedHistoryRef.current.has(activeChat)) hasRenderedHistoryRef.current.add(activeChat); }} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
                           <div className={`flex flex-col max-w-[85%] md:max-w-[70%] ${isMe ? 'items-end' : 'items-start'}`}>
                             <div className={`${currentUser?.settings?.appearance?.bubbleDensity === 'COMPACT' ? 'px-3 py-1.5' : 'px-4 py-2.5'} text-[15px] leading-relaxed shadow-sm break-words ${isMe ? 'neosis-accent-bg text-white rounded-2xl rounded-br-sm' : 'bg-gray-100 dark:bg-[#232a28] text-gray-900 dark:text-gray-200 rounded-2xl rounded-tl-sm transition-colors'}`}>
                               
@@ -1620,10 +1643,7 @@ function NeosisChatInner() {
                     <div className="flex items-center gap-1 pb-1.5">
                       <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,.pdf,.doc,.docx,.txt,.csv,.xls,.xlsx,.ppt,.pptx" />
                       <button type="button" disabled={activeContact?.canMessage === false} onClick={() => fileInputRef.current.click()} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white dark:hover:bg-[#232a28] rounded-lg transition-colors disabled:opacity-40"><Paperclip size={20}/></button>
-                      <button type="button" onClick={() => {
-                        if (!showEmojiPicker && attachmentPreview) {}
-                        setShowEmojiPicker(!showEmojiPicker);
-                      }} className={`p-2 rounded-lg transition-colors ${showEmojiPicker ? 'text-[#0fa384] bg-[#0fa384]/10' : 'text-gray-400 hover:text-gray-900 dark:hover:text-white dark:hover:bg-[#232a28]'}`}><Smile size={20}/></button>
+                      <button type="button" onClick={() => setShowEmojiPicker(!showEmojiPicker)} className={`p-2 rounded-lg transition-colors ${showEmojiPicker ? 'text-[#0fa384] bg-[#0fa384]/10' : 'text-gray-400 hover:text-gray-900 dark:hover:text-white dark:hover:bg-[#232a28]'}`}><Smile size={20}/></button>
                       <button type="button" disabled={activeContact?.canMessage === false} onClick={startRecording} className="p-2 text-gray-400 hover:text-rose-500 dark:hover:bg-rose-500/10 rounded-lg transition-colors disabled:opacity-40"><Mic size={20}/></button>
                     </div>
                     <textarea ref={textareaRef} value={newMessage} disabled={activeContact?.canMessage === false} onChange={handleInputChange} maxLength={5000} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }} placeholder={activeContact?.canMessage === false ? "This contact is not accepting messages" : (attachment ? "Add a caption..." : "Type a message...")} className="neosis-accent-focus flex-1 bg-gray-50 dark:bg-[#151817] text-gray-900 dark:text-white border border-gray-300 dark:border-[#323d38] rounded-xl px-4 py-3 placeholder-gray-400 dark:placeholder-gray-500 text-[15px] resize-none custom-scrollbar outline-none transition-all focus:shadow-[0_0_10px_rgba(15,163,132,0.15)] disabled:opacity-60" rows="1" />
