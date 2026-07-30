@@ -1,6 +1,9 @@
 # Neosis Production Audit
 
-## Implemented in this revision
+> [!WARNING]
+> **Status Note**: The security, session, and infrastructure hardening measures described in Section 1 ("Recommended Production Hardening Specification") represent an **architectural target specification** for Tier 0 production hardening. They are **not yet implemented in the backend codebase** (`neosis-backend/src`). Currently, `neosis-backend` uses an in-memory `ConcurrentHashMap` rate limiter and standard servlet session management.
+
+## Recommended Production Hardening Specification (Tier 0 — Target Architecture)
 
 ### Authentication and sessions
 
@@ -89,7 +92,7 @@ Do not describe this repository as fully production-certified. It is production-
 Based on an architectural audit of the active Neosis codebase (where `ChatMessage.java` currently lacks `replyTo`, `reactions`, `edited`, and `deleted` fields, and there is currently no `Group` / `Room` backend schema), this section outlines the complete feature wishlist and prioritizes execution into grounded tiers.
 
 ### Tier 1 — Finish What Is Already Stubbed in the UI
-These features currently have UI placeholders in [`SettingsModal.jsx`](file:///d:/CandyRobot/Neosis-main/neosis-frontend/src/components/SettingsModal.jsx) that are disabled ("not enabled in this release") waiting for backend completion:
+These features currently have UI placeholders in [`SettingsModal.jsx`](./neosis-frontend/src/components/SettingsModal.jsx) that are disabled ("not enabled in this release") waiting for backend completion:
 1. **Profile Photo Upload**: 
    - *Current State*: The Privacy tab in `SettingsModal.jsx` has a disabled photo selector.
    - *Required Work*: Add `profilePhotoUrl` to `User.java`, implement an authenticated `/api/chat/upload/avatar` endpoint with strict image validation, and replace the initials-based avatar `<divs>` with `<img>` tags across `NeosisChat.jsx` and modals.

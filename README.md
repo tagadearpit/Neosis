@@ -911,7 +911,7 @@ Neosis has a comprehensive feature expansion roadmap grounded against its active
 8. ⭐ **End-to-End Encryption / 2FA**: Client-side key generation and multi-device authentication.
 9. ⭐ **Performance & Polish**: Virtualized message lists, offline send queue with IndexedDB, push notifications, and custom theming.
 
-For complete architectural details and residual risk mitigations, see [`PRODUCTION_AUDIT.md`](file:///d:/CandyRobot/Neosis-main/PRODUCTION_AUDIT.md) and [`neosis-github-wiki/Production-Risks-and-Roadmap.md`](file:///d:/CandyRobot/Neosis-main/neosis-github-wiki/Production-Risks-and-Roadmap.md).
+For complete architectural details and residual risk mitigations, see [`PRODUCTION_AUDIT.md`](./PRODUCTION_AUDIT.md) and [`neosis-github-wiki/Production-Risks-and-Roadmap.md`](./neosis-github-wiki/Production-Risks-and-Roadmap.md).
 
 ---
 
